@@ -5,10 +5,15 @@
 # Creates an LXC container on Proxmox VE pre-configured for OpenClaw
 # Run this on your Proxmox host (not inside a container)
 #
-# Usage: bash openclaw.sh
+# Usage:
+#   Local:  bash openclaw.sh
+#   Remote: bash -c "$(curl -fsSL pveClaw.ivantsov.tech)"
 # =============================================================================
 
 set -euo pipefail
+
+# -- Remote repo base URL (for curl|bash mode) --------------------------------
+REPO_RAW="https://raw.githubusercontent.com/Exploitacious/OpenClaw/refs/heads/master"
 
 # -- Colors & Formatting ------------------------------------------------------
 BL="\e[36m"    # Cyan
@@ -38,6 +43,7 @@ header_info() {
   \____/ .___/\___/_/ /_/ \____/_/\__,_/ |__/|__/
       /_/
          Proxmox LXC Helper Script
+      github.com/Exploitacious/OpenClaw
 
 EOF
 }
@@ -346,45 +352,68 @@ CGROUP
   fi
 }
 
+# -- Resolve a file: use local copy if available, otherwise fetch from GitHub --
+resolve_file() {
+  local FILENAME="$1"
+  local LOCAL_PATH="$2"
+  local REMOTE_URL="$3"
+  local DEST="$4"
+
+  if [[ -f "$LOCAL_PATH" ]]; then
+    cp "$LOCAL_PATH" "$DEST"
+  else
+    msg_info "Fetching ${FILENAME} from GitHub..."
+    if ! curl -fsSL "$REMOTE_URL" -o "$DEST" 2>/dev/null; then
+      msg_error "Failed to download ${FILENAME} from ${REMOTE_URL}"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 # -- Push and Run Install Script -----------------------------------------------
 run_install() {
   local SCRIPT_DIR
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local INSTALL_SCRIPT="${SCRIPT_DIR}/openclaw-install.sh"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd 2>/dev/null || echo "")"
 
-  if [[ ! -f "$INSTALL_SCRIPT" ]]; then
-    msg_error "Install script not found: ${INSTALL_SCRIPT}"
-    msg_error "Ensure openclaw-install.sh is in the same directory as this script."
-    exit 1
-  fi
+  # Stage everything in a temp directory (works for both local and curl|bash)
+  local STAGE_DIR
+  STAGE_DIR=$(mktemp -d /tmp/openclaw-helper.XXXXXX)
+  trap "rm -rf ${STAGE_DIR}" EXIT
+
+  # -- Resolve install script --------------------------------------------------
+  local LOCAL_INSTALL="${SCRIPT_DIR:+${SCRIPT_DIR}/}openclaw-install.sh"
+  resolve_file "openclaw-install.sh" \
+    "$LOCAL_INSTALL" \
+    "${REPO_RAW}/openclaw-install.sh" \
+    "${STAGE_DIR}/openclaw-install.sh" \
+    || exit 1
+  chmod +x "${STAGE_DIR}/openclaw-install.sh"
 
   msg_info "Pushing install script into container..."
-  pct push "$CT_ID" "$INSTALL_SCRIPT" /tmp/openclaw-install.sh
+  pct push "$CT_ID" "${STAGE_DIR}/openclaw-install.sh" /tmp/openclaw-install.sh
   pct exec "$CT_ID" -- chmod +x /tmp/openclaw-install.sh
   msg_ok "Install script pushed"
 
-  # Push config templates if they exist (validate JSON template first)
-  local TPL_DIR="${SCRIPT_DIR}/templates"
-  if [[ -d "$TPL_DIR" ]]; then
-    # Validate JSON template syntax before pushing
-    if [[ -f "${TPL_DIR}/openclaw.json.tpl" ]]; then
-      if ! jq empty < "${TPL_DIR}/openclaw.json.tpl" >/dev/null 2>&1; then
-        msg_error "openclaw.json.tpl is not valid JSON. Fix it before proceeding."
-        exit 1
-      fi
-    fi
+  # -- Resolve and push templates ----------------------------------------------
+  for tpl in openclaw.json.tpl soul.md.tpl agents.md.tpl; do
+    local LOCAL_TPL="${SCRIPT_DIR:+${SCRIPT_DIR}/templates/}${tpl}"
+    local STAGED="${STAGE_DIR}/${tpl}"
 
-    for tpl in openclaw.json.tpl soul.md.tpl agents.md.tpl; do
-      local TPL_PATH="${TPL_DIR}/${tpl}"
-      if [[ -f "$TPL_PATH" ]]; then
-        pct push "$CT_ID" "$TPL_PATH" "/tmp/${tpl}"
-        msg_ok "Pushed template: ${tpl}"
+    if resolve_file "$tpl" "$LOCAL_TPL" "${REPO_RAW}/templates/${tpl}" "$STAGED"; then
+      # Validate JSON template syntax before pushing
+      if [[ "$tpl" == "openclaw.json.tpl" ]]; then
+        if ! jq empty < "$STAGED" >/dev/null 2>&1; then
+          msg_error "openclaw.json.tpl is not valid JSON. Fix it before proceeding."
+          exit 1
+        fi
       fi
-    done
-  else
-    msg_warn "Templates directory not found at ${TPL_DIR}"
-    msg_warn "Container will use OpenClaw defaults (run 'openclaw configure' after login)"
-  fi
+      pct push "$CT_ID" "$STAGED" "/tmp/${tpl}"
+      msg_ok "Pushed template: ${tpl}"
+    else
+      msg_warn "Could not resolve ${tpl} (local or remote). Skipping."
+    fi
+  done
 
   msg_info "Running install script inside container (this takes a few minutes)..."
   echo ""

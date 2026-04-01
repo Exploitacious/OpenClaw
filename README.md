@@ -21,9 +21,19 @@ One command creates a fully configured LXC container with:
 
 ## Usage
 
-Copy the entire `openclaw-helper/` directory to your Proxmox host, then:
+**One-liner (recommended):** Run directly on your Proxmox host:
 
 ```bash
+bash -c "$(curl -fsSL pveClaw.ivantsov.tech)"
+```
+
+The script automatically downloads the install script and templates from GitHub when run remotely. No need to clone the repo first.
+
+**Local:** If you prefer to clone first or want to customize templates before running:
+
+```bash
+git clone https://github.com/Exploitacious/OpenClaw.git
+cd OpenClaw
 bash openclaw.sh
 ```
 
