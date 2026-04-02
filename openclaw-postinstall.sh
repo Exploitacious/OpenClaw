@@ -854,12 +854,35 @@ step_finalize() {
     fi
   fi
 
+  # Fix streamMode → streaming (doctor renames it but config can revert)
+  if jq -e '.channels.telegram.streamMode' "$OC_CONFIG" >/dev/null 2>&1; then
+    local SM_VAL
+    SM_VAL=$(jq -r '.channels.telegram.streamMode' "$OC_CONFIG")
+    jq "del(.channels.telegram.streamMode) | .channels.telegram.streaming = \"${SM_VAL}\"" "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Fixed streamMode → streaming"
+  fi
+
+  # Set gateway.remote.url if Tailscale is connected (so openclaw knows its external URL)
+  if command -v tailscale &>/dev/null; then
+    local TS_DNS
+    TS_DNS=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // ""' | sed 's/\.$//')
+    if [[ -n "$TS_DNS" ]]; then
+      local CURRENT_REMOTE_URL
+      CURRENT_REMOTE_URL=$(jq -r '.gateway.remote.url // ""' "$OC_CONFIG" 2>/dev/null)
+      if [[ "$CURRENT_REMOTE_URL" != "wss://${TS_DNS}" ]]; then
+        openclaw config set gateway.remote.url "wss://${TS_DNS}" >/dev/null 2>&1
+        msg_ok "Gateway remote URL: wss://${TS_DNS}"
+      fi
+    fi
+  fi
+
   # Restart gateway
   msg_info "Restarting gateway..."
   systemctl --user restart openclaw-gateway.service 2>/dev/null || {
     msg_warn "Gateway restart failed. Try: systemctl --user restart openclaw-gateway.service"
   }
-  sleep 2
+  sleep 3
 
   local GW_STATUS
   GW_STATUS=$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo "unknown")
@@ -867,6 +890,19 @@ step_finalize() {
     msg_ok "Gateway running"
   else
     msg_warn "Gateway status: ${GW_STATUS}"
+  fi
+
+  # Auto-approve any pending device pairing requests (first-run bootstrap)
+  local PENDING_COUNT
+  PENDING_COUNT=$(openclaw devices list 2>&1 | grep -c "Pending" || true)
+  if [[ "$PENDING_COUNT" -gt 0 ]]; then
+    msg_info "Approving pending device pairing requests..."
+    local PENDING_IDS
+    PENDING_IDS=$(openclaw devices list 2>&1 | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true)
+    for req_id in $PENDING_IDS; do
+      openclaw devices approve "$req_id" >/dev/null 2>&1 || true
+    done
+    msg_ok "Device pairing approved"
   fi
 
   # Doctor
@@ -938,7 +974,7 @@ print_summary() {
       GW_TOKEN_SUM=$(jq -r '.gateway.auth.token // ""' "$OC_CONFIG" 2>/dev/null)
       echo ""
       echo -e "   ${GN}Dashboard URL (bookmark this):${CL}"
-      echo -e "   ${BL}https://${TS_HOSTNAME_SUM}/?token=${GW_TOKEN_SUM}${CL}"
+      echo -e "   ${BL}https://${TS_HOSTNAME_SUM}/#token=${GW_TOKEN_SUM}${CL}"
       echo ""
     fi
   else
