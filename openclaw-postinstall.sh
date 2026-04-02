@@ -917,11 +917,33 @@ print_summary() {
   fi
 
   echo ""
-  echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
-  echo -e "  ${BL}openclaw gateway status${CL}     Gateway info"
-  echo -e "  ${BL}openclaw logs --follow${CL}      Live logs"
-  echo -e "  ${BL}openclaw tui${CL}                Terminal UI"
+}
+
+# =============================================================================
+# Launch onboard
+# =============================================================================
+step_onboard() {
+  if $NON_INTERACTIVE; then
+    return 0
+  fi
+
   echo ""
+  if prompt_yesno "Launch OpenClaw onboard now to hatch the bot?"; then
+    echo ""
+    msg_ok "Handing off to openclaw onboard..."
+    echo ""
+    # exec replaces this process so the TUI gets full terminal control
+    exec openclaw onboard
+  else
+    echo ""
+    msg_info "Run when ready: openclaw onboard"
+    echo ""
+    echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
+    echo -e "  ${BL}openclaw gateway status${CL}     Gateway info"
+    echo -e "  ${BL}openclaw logs --follow${CL}      Live logs"
+    echo -e "  ${BL}openclaw tui${CL}                Terminal UI"
+    echo ""
+  fi
 }
 
 # =============================================================================
@@ -935,6 +957,7 @@ main() {
   step_tailscale
   step_finalize
   print_summary
+  step_onboard
 }
 
 main "$@"
