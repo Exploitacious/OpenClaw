@@ -362,26 +362,19 @@ step_install_memory() {
 
   ensure_user_runtime_dir
 
-  msg_info "Installing memory plugin from ClawHub..."
+  msg_info "Installing memory plugin from GitHub..."
   sudo -u "$CLAW_USER" bash -c \
     'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
-     export XDG_RUNTIME_DIR="/run/user/$(id -u)" && \
      cd ~/.openclaw/workspace && \
      mkdir -p skills && \
-     openclaw skills install joeykrug/memory-lancedb-hybrid' \
+     cd skills && \
+     git clone https://github.com/CortexReach/memory-lancedb-pro.git memory-lancedb-hybrid && \
+     cd memory-lancedb-hybrid && \
+     npm install --omit=dev' \
     2>&1 | tail -3 || {
-      msg_warn "ClawHub install failed -- trying GitHub fallback..."
-      sudo -u "$CLAW_USER" bash -c \
-        'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
-         cd ~/.openclaw/workspace/skills && \
-         git clone https://github.com/CortexReach/memory-lancedb-pro.git memory-lancedb-hybrid && \
-         cd memory-lancedb-hybrid && \
-         npm install --omit=dev' \
-        2>&1 | tail -3 || {
-          msg_warn "Memory plugin install failed. You can install it manually later."
-          msg_warn "See: https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory"
-          return 0
-        }
+      msg_warn "Memory plugin install failed. You can install it manually later."
+      msg_warn "See: https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory"
+      return 0
     }
 
   msg_ok "Memory plugin installed"
@@ -530,13 +523,46 @@ step_validate() {
     git commit -q -m 'config: post-install hardening complete' 2>/dev/null
   " || true
 
+  # -- Get container IP for summary ----------------------------------------------
+  local CONTAINER_IP
+  CONTAINER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+
   echo ""
   msg_ok "============================================"
   msg_ok "  OpenClaw installation complete!"
   msg_ok "============================================"
   echo ""
-  msg_info "Login as: ssh claw@<container-ip>"
-  msg_info "Password: openclaw (CHANGE THIS)"
+  echo -e " ${GN}Next steps:${CL}"
+  echo ""
+  echo -e "  1. Log in:"
+  echo -e "     ${BL}ssh claw@${CONTAINER_IP:-<container-ip>}${CL}"
+  echo -e "     Password: ${YW}openclaw${CL}"
+  echo ""
+  echo -e "  2. ${RD}Change the default password immediately:${CL}"
+  echo -e "     ${BL}passwd${CL}"
+  echo ""
+  echo -e "  3. Set your API keys:"
+  echo -e "     ${BL}nano ~/.openclaw/.env${CL}"
+  echo -e "     Add: ANTHROPIC_API_KEY, OPENAI_API_KEY (for embeddings)"
+  echo -e "     Optional: OPENROUTER_API_KEY (for fallback models)"
+  echo ""
+  echo -e "  4. Configure your Telegram bot:"
+  echo -e "     ${BL}nano ~/.openclaw/openclaw.json${CL}"
+  echo -e "     Replace ${YW}__TELEGRAM_BOT_TOKEN__${CL} with your bot token from @BotFather"
+  echo ""
+  echo -e "  5. Edit your agent personality:"
+  echo -e "     ${BL}nano ~/.openclaw/workspace/SOUL.md${CL}"
+  echo ""
+  echo -e "  6. Start Tailscale:"
+  echo -e "     ${BL}sudo tailscale up${CL}"
+  echo -e "     ${BL}sudo tailscale serve --bg 18789${CL}"
+  echo ""
+  echo -e "  7. Start the gateway:"
+  echo -e "     ${BL}openclaw gateway start${CL}"
+  echo ""
+  echo -e "  8. Pair Telegram and verify:"
+  echo -e "     ${BL}openclaw onboard${CL}"
+  echo -e "     ${BL}openclaw doctor --fix${CL}"
   echo ""
 }
 
