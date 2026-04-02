@@ -90,25 +90,27 @@ ensure_template() {
   TEMPLATE_PATH=$(pveam list "$TEMPLATE_STORAGE" 2>/dev/null | grep -oP "ubuntu-24\.04-standard.*\.tar\.(zst|gz)" | head -1 || true)
 
   if [[ -z "$TEMPLATE_PATH" ]]; then
-    msg_info "Downloading Ubuntu 24.04 LTS template..."
+    # All status messages go to stderr so stdout stays clean for the caller
+    msg_info "Downloading Ubuntu 24.04 LTS template..." >&2
     pveam update >/dev/null 2>&1
 
     # Find the exact template name available
     TEMPLATE_NAME=$(pveam available --section system 2>/dev/null | grep -oP "ubuntu-24\.04-standard.*\.tar\.(zst|gz)" | head -1 || true)
 
     if [[ -z "$TEMPLATE_NAME" ]]; then
-      msg_error "Ubuntu 24.04 template not found in available templates."
-      msg_error "Run 'pveam available --section system | grep ubuntu-24' to check."
+      msg_error "Ubuntu 24.04 template not found in available templates." >&2
+      msg_error "Run 'pveam available --section system | grep ubuntu-24' to check." >&2
       exit 1
     fi
 
     pveam download "$TEMPLATE_STORAGE" "$TEMPLATE_NAME" >/dev/null 2>&1
-    msg_ok "Template downloaded: $TEMPLATE_NAME"
+    msg_ok "Template downloaded: $TEMPLATE_NAME" >&2
   else
     TEMPLATE_NAME="$TEMPLATE_PATH"
-    msg_ok "Template found: $TEMPLATE_NAME"
+    msg_ok "Template found: $TEMPLATE_NAME" >&2
   fi
 
+  # Only the clean path goes to stdout (captured by caller)
   echo "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE_NAME}"
 }
 
