@@ -976,6 +976,10 @@ print_summary() {
       echo -e "   ${GN}Dashboard URL (bookmark this):${CL}"
       echo -e "   ${BL}https://${TS_HOSTNAME_SUM}/#token=${GW_TOKEN_SUM}${CL}"
       echo ""
+      msg_info "First visit from a new browser requires device pairing approval."
+      msg_info "Open the URL, then run: ${BL}openclaw devices list${CL}"
+      msg_info "Approve with: ${BL}openclaw devices approve <request-id>${CL}"
+      echo ""
     fi
   else
     ISSUES+=("Connect Tailscale: sudo tailscale up")
