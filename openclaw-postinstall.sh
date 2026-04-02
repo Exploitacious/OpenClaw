@@ -56,7 +56,9 @@ PROVIDER_REGISTRY=(
   "Google Gemini|gemini-api-key|--gemini-api-key|gemini/gemini-2.5-flash, gemini/gemini-2.5-pro"
   "OpenAI (GPT)|openai-api-key|--openai-api-key|openai/gpt-5, openai/gpt-5-mini"
   "OpenRouter|openrouter-api-key|--openrouter-api-key|openrouter/google/gemini-3-flash-preview"
-  "Ollama (local)|ollama||ollama/llama4, ollama/qwen3"
+  "OpenCode Zen|opencode-zen|--opencode-zen-api-key|opencode-zen/kimi-k2.5, opencode-zen/glm-5"
+  "OpenCode Go|opencode-go|--opencode-go-api-key|opencode-go/kimi-k2.5, opencode-go/minimax-m2.5"
+  "Ollama|ollama||ollama/llama4, ollama/qwen3"
   "DeepSeek|deepseek-api-key|--deepseek-api-key|deepseek/deepseek-chat, deepseek/deepseek-reasoner"
   "xAI (Grok)|xai-api-key|--xai-api-key|xai/grok-3, xai/grok-3-mini"
   "Mistral|mistral-api-key|--mistral-api-key|mistral/mistral-large, mistral/codestral"
@@ -108,16 +110,19 @@ while [[ $# -gt 0 ]]; do
 Usage: openclaw-postinstall.sh [OPTIONS]
 
 AI Providers (repeatable):
-  --provider <choice>       Provider auth-choice (e.g. anthropic-api-key, ollama)
+  --provider <choice>       Provider auth-choice (e.g. anthropic-api-key, ollama,
+                            opencode-go, opencode-zen, gemini-api-key)
   --provider-key <key>      API key for the preceding --provider
-  --primary-model <model>   Primary model (e.g. anthropic/claude-sonnet-4-5)
-  --fallback-models <csv>   Comma-separated fallback models
-  --heartbeat-model <model> Heartbeat/lightweight model
-  --ollama-url <url>        Ollama base URL (default: http://localhost:11434)
+  --ollama-url <url>        Ollama/OpenWebUI base URL (default: http://localhost:11434)
   --custom-base-url <url>   Custom provider base URL
 
 Embeddings:
   --openai-key <key>        OpenAI key (for memory embeddings only)
+
+Model Roles:
+  --primary-model <model>   Primary model (e.g. anthropic/claude-sonnet-4-5)
+  --fallback-models <csv>   Comma-separated fallback models
+  --heartbeat-model <model> Heartbeat/lightweight model
 
 Telegram:
   --telegram-token <token>  Bot token from @BotFather
@@ -157,7 +162,12 @@ prompt_value() {
 
   if [[ "$SENSITIVE" == "true" ]]; then
     printf "   ${BL}%s${CL}%s: " "$PROMPT_TEXT" "$DISPLAY_DEFAULT"
-    read -rs REPLY; echo ""
+    read -rs REPLY
+    if [[ -n "$REPLY" ]]; then
+      echo -e " ${GN}[entered]${CL}"
+    else
+      echo ""
+    fi
   else
     printf "   ${BL}%s${CL}%s: " "$PROMPT_TEXT" "$DISPLAY_DEFAULT"
     read -r REPLY
@@ -235,7 +245,7 @@ msg_ok "Config file found"
 # Step 1: AI Providers
 # =============================================================================
 step_ai_providers() {
-  msg_step "Step 1/6: AI Model Providers"
+  msg_step "Step 1/6: AI Providers"
 
   if $SKIP_PROVIDERS; then
     msg_warn "Skipped (--skip-providers)"
@@ -327,11 +337,20 @@ step_ai_providers() {
     local EXTRA_FLAGS=""
 
     if [[ "$AUTH_CHOICE" == "ollama" ]]; then
-      # Ollama: no API key, just base URL
+      # Ollama: supports local installs or remote proxies (e.g. OpenWebUI)
       local OLLAMA_URL="http://localhost:11434"
-      prompt_value OLLAMA_URL "Ollama base URL" "http://localhost:11434"
+      prompt_value OLLAMA_URL "Ollama base URL (or OpenWebUI/remote URL)" "http://localhost:11434"
       if [[ "$OLLAMA_URL" != "http://localhost:11434" ]]; then
         EXTRA_FLAGS="--custom-base-url $OLLAMA_URL"
+      fi
+      # Remote Ollama endpoints (OpenWebUI etc.) may require an API key
+      local OLLAMA_KEY=""
+      prompt_value OLLAMA_KEY "API key (blank if local/no auth needed)" "" "true"
+      if [[ -n "$OLLAMA_KEY" ]]; then
+        PROVIDER_KEY="$OLLAMA_KEY"
+        # Ollama auth-choice doesn't have a key flag, register via custom instead
+        AUTH_CHOICE="custom-api-key"
+        EXTRA_FLAGS="--custom-base-url $OLLAMA_URL --custom-compatibility openai"
       fi
     elif [[ "$AUTH_CHOICE" == "custom-api-key" ]]; then
       # Custom: need base URL + optional key
@@ -364,6 +383,8 @@ step_ai_providers() {
         openai-api-key)      ENV_VAR_NAME="OPENAI_API_KEY" ;;
         openrouter-api-key)  ENV_VAR_NAME="OPENROUTER_API_KEY" ;;
         gemini-api-key)      ENV_VAR_NAME="GEMINI_API_KEY" ;;
+        opencode-zen)        ENV_VAR_NAME="OPENCODE_ZEN_API_KEY" ;;
+        opencode-go)         ENV_VAR_NAME="OPENCODE_GO_API_KEY" ;;
         deepseek-api-key)    ENV_VAR_NAME="DEEPSEEK_API_KEY" ;;
         xai-api-key)         ENV_VAR_NAME="XAI_API_KEY" ;;
         mistral-api-key)     ENV_VAR_NAME="MISTRAL_API_KEY" ;;
@@ -386,79 +407,10 @@ step_ai_providers() {
 }
 
 # =============================================================================
-# Step 2: Model Assignment
-# =============================================================================
-step_model_config() {
-  msg_step "Step 2/6: Model Assignment"
-
-  # Show current config
-  local CURRENT_PRIMARY CURRENT_FALLBACKS CURRENT_HEARTBEAT
-  CURRENT_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // "not set"' "$OC_CONFIG" 2>/dev/null)
-  CURRENT_FALLBACKS=$(jq -r '(.agents.defaults.model.fallbacks // []) | join(", ")' "$OC_CONFIG" 2>/dev/null)
-  CURRENT_HEARTBEAT=$(jq -r '.agents.defaults.heartbeat.model // "not set"' "$OC_CONFIG" 2>/dev/null)
-
-  msg_info "Current model config:"
-  msg_dim "  Primary:   ${CURRENT_PRIMARY}"
-  msg_dim "  Fallbacks: ${CURRENT_FALLBACKS:-none}"
-  msg_dim "  Heartbeat: ${CURRENT_HEARTBEAT}"
-  echo ""
-
-  if $NON_INTERACTIVE && [[ -z "$PRIMARY_MODEL" && -z "$FALLBACK_MODELS" && -z "$HEARTBEAT_MODEL" ]]; then
-    msg_info "No model overrides provided. Keeping current config."
-    return 0
-  fi
-
-  # Primary model
-  if [[ -z "$PRIMARY_MODEL" ]] && ! $NON_INTERACTIVE; then
-    msg_info "Set primary model (provider/model format)."
-    msg_dim "Examples: anthropic/claude-sonnet-4-5, gemini/gemini-2.5-flash, ollama/llama4"
-    prompt_value PRIMARY_MODEL "Primary model" "$CURRENT_PRIMARY"
-  fi
-
-  if [[ -n "$PRIMARY_MODEL" && "$PRIMARY_MODEL" != "$CURRENT_PRIMARY" ]]; then
-    openclaw config set agents.defaults.model.primary "$PRIMARY_MODEL" >/dev/null 2>&1
-    msg_ok "Primary model set: ${PRIMARY_MODEL}"
-  else
-    msg_ok "Primary model unchanged: ${CURRENT_PRIMARY}"
-  fi
-
-  # Fallback models
-  if [[ -z "$FALLBACK_MODELS" ]] && ! $NON_INTERACTIVE; then
-    msg_info "Set fallback models (comma-separated, or blank to keep current)."
-    msg_dim "Example: openai/gpt-5-mini, openrouter/google/gemini-3-flash-preview"
-    prompt_value FALLBACK_MODELS "Fallback models" ""
-  fi
-
-  if [[ -n "$FALLBACK_MODELS" ]]; then
-    # Convert CSV to JSON array
-    local FB_JSON
-    FB_JSON=$(echo "$FALLBACK_MODELS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
-    jq --argjson fb "$FB_JSON" '.agents.defaults.model.fallbacks = $fb' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
-    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"
-    chmod 600 "$OC_CONFIG"
-    msg_ok "Fallback models set: ${FALLBACK_MODELS}"
-  fi
-
-  # Heartbeat model (cheap/fast model for periodic pings)
-  if [[ -z "$HEARTBEAT_MODEL" ]] && ! $NON_INTERACTIVE; then
-    msg_info "Heartbeat model (cheap/fast model for background tasks)."
-    msg_dim "Example: openai/gpt-5-nano, gemini/gemini-2.5-flash, ollama/llama4-scout"
-    prompt_value HEARTBEAT_MODEL "Heartbeat model" "$CURRENT_HEARTBEAT"
-  fi
-
-  if [[ -n "$HEARTBEAT_MODEL" && "$HEARTBEAT_MODEL" != "$CURRENT_HEARTBEAT" ]]; then
-    openclaw config set agents.defaults.heartbeat.model "$HEARTBEAT_MODEL" >/dev/null 2>&1
-    msg_ok "Heartbeat model set: ${HEARTBEAT_MODEL}"
-  else
-    msg_ok "Heartbeat model unchanged: ${CURRENT_HEARTBEAT}"
-  fi
-}
-
-# =============================================================================
-# Step 3: Embeddings Key (OpenAI for memory)
+# Step 2: Embeddings Key (OpenAI for memory)
 # =============================================================================
 step_embeddings() {
-  msg_step "Step 3/6: Memory Embeddings (OpenAI)"
+  msg_step "Step 2/6: Memory Embeddings (OpenAI)"
 
   msg_dim "OpenClaw uses OpenAI's text-embedding-3-small for semantic memory search."
   msg_dim "This is separate from your AI model providers."
@@ -492,10 +444,228 @@ step_embeddings() {
 }
 
 # =============================================================================
+# Step 3: Model Roles
+# =============================================================================
+step_model_config() {
+  msg_step "Step 3/6: Model Roles"
+
+  # Read current config
+  local CURRENT_PRIMARY CURRENT_FALLBACKS CURRENT_HEARTBEAT CURRENT_SUBAGENT CURRENT_IMAGE CURRENT_PDF
+  CURRENT_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // "not set"' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_FALLBACKS=$(jq -r '(.agents.defaults.model.fallbacks // []) | join(", ")' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_HEARTBEAT=$(jq -r '.agents.defaults.heartbeat.model // "not set"' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_SUBAGENT=$(jq -r '.agents.defaults.subagents.model.primary // .agents.defaults.subagents.model // "not set"' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_IMAGE=$(jq -r '.agents.defaults.imageModel.primary // .agents.defaults.imageModel // "not set"' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_PDF=$(jq -r '.agents.defaults.pdfModel.primary // .agents.defaults.pdfModel // "not set"' "$OC_CONFIG" 2>/dev/null)
+
+  msg_info "Current model roles:"
+  msg_dim "  Primary (conversation): ${CURRENT_PRIMARY}"
+  msg_dim "  Fallbacks:              ${CURRENT_FALLBACKS:-none}"
+  msg_dim "  Sub-agents (tasks):     ${CURRENT_SUBAGENT}"
+  msg_dim "  Heartbeat (background): ${CURRENT_HEARTBEAT}"
+  msg_dim "  Image understanding:    ${CURRENT_IMAGE}"
+  msg_dim "  PDF processing:         ${CURRENT_PDF}"
+  echo ""
+
+  # Non-interactive: apply flags if provided, otherwise keep current
+  if $NON_INTERACTIVE && [[ -z "$PRIMARY_MODEL" && -z "$FALLBACK_MODELS" && -z "$HEARTBEAT_MODEL" ]]; then
+    msg_info "No model overrides provided. Keeping current config."
+    return 0
+  fi
+
+  # Interactive: offer a template or manual config
+  if ! $NON_INTERACTIVE; then
+    echo ""
+    msg_info "How would you like to configure models?"
+    echo ""
+    printf "   ${BL} 1${CL}) General Intelligence — one strong model everywhere, cheap fallbacks\n"
+    printf "   ${BL} 2${CL}) Manual — set each role individually\n"
+    printf "   ${BL} s${CL}) Skip — keep current config\n"
+    echo ""
+    printf "   ${BL}Pick${CL}: "
+    read -r MODE_CHOICE
+
+    case "${MODE_CHOICE,,}" in
+      s|skip)
+        msg_ok "Model config unchanged"
+        return 0 ;;
+      1)
+        _model_template_general
+        return 0 ;;
+      2)
+        _model_manual
+        return 0 ;;
+      *)
+        msg_warn "Invalid choice, keeping current config"
+        return 0 ;;
+    esac
+  fi
+
+  # CLI flag path (non-interactive)
+  _model_apply_flags
+}
+
+# -- General Intelligence template ---------------------------------------------
+_model_template_general() {
+  echo ""
+  msg_info "General Intelligence template"
+  msg_dim "Uses one strong model for primary + sub-agents, with cheaper fallbacks"
+  msg_dim "and a fast model for heartbeat. Good for broad, general-purpose use."
+  echo ""
+
+  local GI_PRIMARY="" GI_FALLBACKS="" GI_HEARTBEAT=""
+
+  msg_info "Pick a primary model — this will handle conversations and sub-agent tasks."
+  msg_dim "Examples: anthropic/claude-sonnet-4-5, gemini/gemini-2.5-flash, opencode-go/kimi-k2.5"
+  prompt_value GI_PRIMARY "Primary model" "$CURRENT_PRIMARY"
+
+  msg_info "Fallback models (comma-separated) — used when primary is down or rate-limited."
+  msg_dim "Tip: mix providers for resilience (e.g. a Gemini + an OpenRouter model)"
+  prompt_value GI_FALLBACKS "Fallback models" "$CURRENT_FALLBACKS"
+
+  msg_info "Heartbeat model — cheap/fast model for background pings and lightweight tasks."
+  msg_dim "Examples: openai/gpt-5-nano, gemini/gemini-2.5-flash, opencode-go/minimax-m2.5"
+  prompt_value GI_HEARTBEAT "Heartbeat model" "$CURRENT_HEARTBEAT"
+
+  # Apply: primary
+  if [[ -n "$GI_PRIMARY" && "$GI_PRIMARY" != "$CURRENT_PRIMARY" ]]; then
+    openclaw config set agents.defaults.model.primary "$GI_PRIMARY" >/dev/null 2>&1
+    msg_ok "Primary: ${GI_PRIMARY}"
+  else
+    msg_ok "Primary unchanged: ${CURRENT_PRIMARY}"
+  fi
+
+  # Apply: fallbacks
+  if [[ -n "$GI_FALLBACKS" && "$GI_FALLBACKS" != "$CURRENT_FALLBACKS" ]]; then
+    local FB_JSON
+    FB_JSON=$(echo "$GI_FALLBACKS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+    jq --argjson fb "$FB_JSON" '.agents.defaults.model.fallbacks = $fb' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Fallbacks: ${GI_FALLBACKS}"
+  fi
+
+  # Apply: sub-agents = same as primary (general intelligence)
+  if [[ -n "$GI_PRIMARY" && "$GI_PRIMARY" != "$CURRENT_SUBAGENT" ]]; then
+    openclaw config set agents.defaults.subagents.model "$GI_PRIMARY" >/dev/null 2>&1
+    msg_ok "Sub-agents: ${GI_PRIMARY} (same as primary)"
+  fi
+
+  # Apply: heartbeat
+  if [[ -n "$GI_HEARTBEAT" && "$GI_HEARTBEAT" != "$CURRENT_HEARTBEAT" ]]; then
+    openclaw config set agents.defaults.heartbeat.model "$GI_HEARTBEAT" >/dev/null 2>&1
+    msg_ok "Heartbeat: ${GI_HEARTBEAT}"
+  else
+    msg_ok "Heartbeat unchanged: ${CURRENT_HEARTBEAT}"
+  fi
+
+  # Image + PDF: inherit primary (good general-purpose default)
+  if [[ -n "$GI_PRIMARY" ]]; then
+    openclaw config set agents.defaults.imageModel "$GI_PRIMARY" >/dev/null 2>&1
+    openclaw config set agents.defaults.pdfModel "$GI_PRIMARY" >/dev/null 2>&1
+    msg_ok "Image + PDF: ${GI_PRIMARY} (inherits primary)"
+  fi
+
+  echo ""
+  msg_ok "General Intelligence template applied"
+}
+
+# -- Manual per-role config ----------------------------------------------------
+_model_manual() {
+  echo ""
+  msg_info "Configure each model role individually."
+  msg_dim "Leave blank to keep current value. Format: provider/model-name"
+  echo ""
+
+  # Primary
+  local M_PRIMARY=""
+  msg_info "Primary — main conversation model."
+  prompt_value M_PRIMARY "Primary model" "$CURRENT_PRIMARY"
+  if [[ -n "$M_PRIMARY" && "$M_PRIMARY" != "$CURRENT_PRIMARY" ]]; then
+    openclaw config set agents.defaults.model.primary "$M_PRIMARY" >/dev/null 2>&1
+    msg_ok "Primary: ${M_PRIMARY}"
+  else
+    msg_ok "Primary unchanged: ${CURRENT_PRIMARY}"
+  fi
+
+  # Fallbacks
+  local M_FALLBACKS=""
+  msg_info "Fallbacks — backup models (comma-separated)."
+  prompt_value M_FALLBACKS "Fallback models" "$CURRENT_FALLBACKS"
+  if [[ -n "$M_FALLBACKS" && "$M_FALLBACKS" != "$CURRENT_FALLBACKS" ]]; then
+    local FB_JSON
+    FB_JSON=$(echo "$M_FALLBACKS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+    jq --argjson fb "$FB_JSON" '.agents.defaults.model.fallbacks = $fb' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Fallbacks: ${M_FALLBACKS}"
+  fi
+
+  # Sub-agents
+  local M_SUBAGENT=""
+  msg_info "Sub-agents — model for spawned background tasks."
+  msg_dim "Can be cheaper than primary. Leave blank to inherit primary."
+  prompt_value M_SUBAGENT "Sub-agent model" "$CURRENT_SUBAGENT"
+  if [[ -n "$M_SUBAGENT" && "$M_SUBAGENT" != "$CURRENT_SUBAGENT" ]]; then
+    openclaw config set agents.defaults.subagents.model "$M_SUBAGENT" >/dev/null 2>&1
+    msg_ok "Sub-agents: ${M_SUBAGENT}"
+  fi
+
+  # Heartbeat
+  local M_HEARTBEAT=""
+  msg_info "Heartbeat — cheap/fast model for background monitoring."
+  prompt_value M_HEARTBEAT "Heartbeat model" "$CURRENT_HEARTBEAT"
+  if [[ -n "$M_HEARTBEAT" && "$M_HEARTBEAT" != "$CURRENT_HEARTBEAT" ]]; then
+    openclaw config set agents.defaults.heartbeat.model "$M_HEARTBEAT" >/dev/null 2>&1
+    msg_ok "Heartbeat: ${M_HEARTBEAT}"
+  fi
+
+  # Image understanding
+  local M_IMAGE=""
+  msg_info "Image understanding — vision model for analyzing images."
+  prompt_value M_IMAGE "Image model" "$CURRENT_IMAGE"
+  if [[ -n "$M_IMAGE" && "$M_IMAGE" != "$CURRENT_IMAGE" ]]; then
+    openclaw config set agents.defaults.imageModel "$M_IMAGE" >/dev/null 2>&1
+    msg_ok "Image: ${M_IMAGE}"
+  fi
+
+  # PDF
+  local M_PDF=""
+  msg_info "PDF processing — model for reading and analyzing PDFs."
+  prompt_value M_PDF "PDF model" "$CURRENT_PDF"
+  if [[ -n "$M_PDF" && "$M_PDF" != "$CURRENT_PDF" ]]; then
+    openclaw config set agents.defaults.pdfModel "$M_PDF" >/dev/null 2>&1
+    msg_ok "PDF: ${M_PDF}"
+  fi
+
+  echo ""
+  msg_ok "Manual model config applied"
+}
+
+# -- Apply CLI flags (non-interactive) -----------------------------------------
+_model_apply_flags() {
+  if [[ -n "$PRIMARY_MODEL" ]]; then
+    openclaw config set agents.defaults.model.primary "$PRIMARY_MODEL" >/dev/null 2>&1
+    msg_ok "Primary model: ${PRIMARY_MODEL}"
+  fi
+
+  if [[ -n "$FALLBACK_MODELS" ]]; then
+    local FB_JSON
+    FB_JSON=$(echo "$FALLBACK_MODELS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+    jq --argjson fb "$FB_JSON" '.agents.defaults.model.fallbacks = $fb' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Fallback models: ${FALLBACK_MODELS}"
+  fi
+
+  if [[ -n "$HEARTBEAT_MODEL" ]]; then
+    openclaw config set agents.defaults.heartbeat.model "$HEARTBEAT_MODEL" >/dev/null 2>&1
+    msg_ok "Heartbeat model: ${HEARTBEAT_MODEL}"
+  fi
+}
+
+# =============================================================================
 # Step 4: Telegram Bot
 # =============================================================================
 step_telegram() {
-  msg_step "Step 4/6: Telegram Bot"
+  msg_step "Step 4/6: Telegram"
 
   local CURRENT_TOKEN
   CURRENT_TOKEN=$(jq -r '.channels.telegram.botToken // ""' "$OC_CONFIG" 2>/dev/null)
@@ -759,8 +929,8 @@ print_summary() {
 # =============================================================================
 main() {
   step_ai_providers
-  step_model_config
   step_embeddings
+  step_model_config
   step_telegram
   step_tailscale
   step_finalize

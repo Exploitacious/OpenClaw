@@ -63,9 +63,9 @@ The wizard walks through six steps interactively:
 
 | Step | What it does |
 |------|-------------|
-| AI Providers | Menu to add Anthropic, Gemini, OpenAI, Ollama, DeepSeek, xAI, Mistral, OpenRouter, Together, LiteLLM, or any custom OpenAI-compatible endpoint |
-| Model Assignment | Set primary model, fallback chain, and heartbeat (cheap/fast) model |
+| AI Providers | Menu to add Anthropic, Gemini, OpenAI, OpenCode Zen/Go, Ollama (local or remote via OpenWebUI), DeepSeek, xAI, Mistral, OpenRouter, Together, LiteLLM, or any custom OpenAI-compatible endpoint |
 | Embeddings | OpenAI API key for memory search (text-embedding-3-small) — separate from model providers |
+| Model Roles | Choose "General Intelligence" template (one strong model everywhere) or manually assign models per role: primary, fallbacks, sub-agents, heartbeat, image understanding, PDF processing |
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
@@ -80,9 +80,10 @@ For automation or repeatable deployments, pass everything as flags:
 bash ~/OpenClaw/openclaw-postinstall.sh \
   --provider anthropic-api-key --provider-key sk-ant-... \
   --provider gemini-api-key --provider-key AIza... \
-  --provider ollama \
+  --provider opencode-go --provider-key sk-... \
+  --provider ollama --ollama-url https://openwebui.example.com \
   --primary-model anthropic/claude-sonnet-4-5 \
-  --fallback-models "gemini/gemini-2.5-flash, ollama/llama4" \
+  --fallback-models "gemini/gemini-2.5-flash, opencode-go/kimi-k2.5" \
   --heartbeat-model openai/gpt-5-nano \
   --openai-key sk-... \
   --telegram-token 123456:ABCdef... \
@@ -91,7 +92,7 @@ bash ~/OpenClaw/openclaw-postinstall.sh \
   --non-interactive
 ```
 
-Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama and custom endpoints need no key. Run `bash openclaw-postinstall.sh --help` for all flags.
+Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. Run `bash openclaw-postinstall.sh --help` for all flags.
 
 ## File Structure
 
