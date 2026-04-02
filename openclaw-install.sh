@@ -442,8 +442,10 @@ mkdir -p "$BACKUP_DIR"
 
 tar czf "$BACKUP_DIR/openclaw-${DATE}.tar.gz" \
   ~/.openclaw/openclaw.json \
+  ~/.openclaw/.env \
   ~/.openclaw/credentials/ \
   ~/.openclaw/workspace/ \
+  ~/.openclaw/agents/*/agent/auth-profiles.json \
   2>/dev/null || true
 
 # Keep only last 7 days of backups

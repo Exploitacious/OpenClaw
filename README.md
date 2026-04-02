@@ -125,6 +125,8 @@ OpenClaw/
 | `~/bin/backup-openclaw.sh` | Daily backup script |
 | `~/backups/` | Backup tarballs (7-day retention) |
 
+The daily backup includes `openclaw.json`, `.env`, `credentials/`, `workspace/`, and all `auth-profiles.json` files (provider credentials). Retained for 7 days.
+
 ## Customizing Templates
 
 Edit files in `templates/` before running the install script to change what ships with every new container.
