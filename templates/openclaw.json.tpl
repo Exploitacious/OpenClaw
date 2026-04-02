@@ -15,6 +15,7 @@
         ]
       },
       "workspace": "~/.openclaw/workspace",
+      "elevatedDefault": "full",
       "memorySearch": {
         "sources": ["memory", "sessions"],
         "experimental": {
@@ -56,7 +57,8 @@
     "profile": "full",
     "exec": {
       "host": "gateway",
-      "security": "full"
+      "security": "full",
+      "ask": "off"
     },
     "web": {
       "search": {
