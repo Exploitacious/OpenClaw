@@ -1,114 +1,181 @@
-# OpenClaw Helper Scripts
+# OpenClaw
 
-Automates the setup of OpenClaw on Proxmox LXC containers or any existing Linux machine.
+Automates the deployment and configuration of [OpenClaw](https://openclaw.ai) on Proxmox LXC containers or any Debian/Ubuntu machine.
 
-## What It Does
+## What You Get
 
-One command gives you a fully configured OpenClaw environment with:
+One command creates a ready-to-use OpenClaw environment:
 
-- Ubuntu 24.04 LTS base (Node.js 22.x via NodeSource, build-essential)
-- Dedicated `claw` user with systemd lingering
-- OpenClaw installed with gateway service
-- Hardened `openclaw.json` with sane defaults (coordinator/worker model pattern, fallback chains, concurrency caps, context pruning, compaction)
-- Memory plugin (memory-lancedb-hybrid) for persistent semantic + keyword memory
-- Tailscale installed (ready for `tailscale up`)
+- Ubuntu 24.04 LTS base with Node.js 22.x and build-essential
+- Dedicated `claw` user with passwordless sudo and systemd lingering
+- OpenClaw installed with the gateway running as a systemd user service
+- Hardened config template (loopback gateway, log redaction, file permissions 600/700, tool policies)
+- Memory plugin ([memory-lancedb-hybrid](https://github.com/CortexReach/memory-lancedb-pro)) for persistent semantic + keyword memory
+- Tailscale installed and ready for authentication
 - Prompt injection defense baked into AGENTS.md
-- Security hardening (loopback gateway, log redaction, file permissions, tool policies)
-- Git-tracked config directory for rollback
-- Automated daily backups with 7-day retention
-- 30-day memory file cleanup cron
+- Git-tracked `~/.openclaw/` config directory for rollback
+- Automated daily backups (3 AM, 7-day retention) and 30-day memory cleanup cron
+- System-wide PATH via `/etc/profile.d/openclaw.sh` (survives dotfile replacement)
+- Node compile cache and `OPENCLAW_NO_RESPAWN` for faster CLI starts on LXC/VM hosts
 
-## Usage
+After install, a post-install wizard handles everything that needs human input: AI providers, model selection, API keys, Telegram bot, and Tailscale auth.
 
-### New Proxmox LXC (creates a container and installs everything)
+## Quick Start
 
-Run on your Proxmox host:
+### Proxmox Host (creates LXC + installs)
 
 ```bash
 bash -c "$(curl -fsSL pveClaw.ivantsov.tech)"
 ```
 
-The script presents a dialog-based TUI with Simple (recommended) and Advanced modes, creates an LXC container, then runs the install script inside it.
+Dialog-based TUI with Simple (recommended) and Advanced modes. Creates an unprivileged LXC with nesting, injects `/dev/net/tun` for Tailscale, then runs the install script inside.
 
-### Existing Linux Machine (installs on what you've already got)
-
-Run directly on any Debian/Ubuntu machine (including an existing LXC container):
+### Existing Linux Machine (installs directly)
 
 ```bash
 bash -c "$(curl -fsSL setupClaw.ivantsov.tech)"
 ```
 
-This runs the install script in standalone mode. Templates are fetched from GitHub automatically. Must be run as root.
+Standalone mode on any Debian/Ubuntu machine. Templates are fetched from GitHub. Must be run as root.
 
 ### Local Clone
-
-If you prefer to clone first or want to customize templates before running:
 
 ```bash
 git clone https://github.com/Exploitacious/OpenClaw.git
 cd OpenClaw
-bash openclaw.sh          # Proxmox host — creates LXC + installs
-# -- or --
-bash openclaw-install.sh  # Inside a machine — installs directly
-```
-
-## File Structure
-
-```
-openclaw-helper/
-├── openclaw.sh              # Proxmox host script (creates LXC + runs install)
-├── openclaw-install.sh      # Install script (works standalone or via PVE host)
-├── templates/
-│   ├── openclaw.json.tpl    # Config template with security defaults
-│   ├── soul.md.tpl          # Agent personality scaffold
-│   └── agents.md.tpl        # Agent instructions + prompt injection defense
-└── README.md
+bash openclaw.sh          # On Proxmox host — creates LXC + installs
+# or
+sudo bash openclaw-install.sh  # On any machine — installs directly
 ```
 
 ## After Installation
 
-1. SSH into the container: `ssh claw@<container-ip>` (password: `openclaw`)
-2. **Change the default password immediately**
-3. Run `openclaw configure` to set your model providers and API keys
-4. Edit `~/.openclaw/openclaw.json` and replace `__TELEGRAM_BOT_TOKEN__` with your bot token
-5. Edit `~/.openclaw/workspace/SOUL.md` to define your agent's personality
-6. Start Tailscale: `sudo tailscale up && sudo tailscale serve --bg 18789`
-7. Pair your Telegram bot and verify with `openclaw doctor --fix`
+1. **Reboot** the container to load PATH and services: `reboot`
+2. **SSH in**: `ssh claw@<container-ip>` (password: `openclaw`)
+3. **Change the default password**: `passwd`
+4. **Run the post-install wizard**:
+
+```bash
+bash ~/OpenClaw/openclaw-postinstall.sh
+```
+
+The wizard walks through six steps interactively:
+
+| Step | What it does |
+|------|-------------|
+| AI Providers | Menu to add Anthropic, Gemini, OpenAI, Ollama, DeepSeek, xAI, Mistral, OpenRouter, Together, LiteLLM, or any custom OpenAI-compatible endpoint |
+| Model Assignment | Set primary model, fallback chain, and heartbeat (cheap/fast) model |
+| Embeddings | OpenAI API key for memory search (text-embedding-3-small) — separate from model providers |
+| Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
+| Tailscale | Authentication + Tailscale Serve on port 18789 |
+| Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
+
+All steps detect existing config and skip what's already done. Re-run safely at any time.
+
+### Scripted / Non-Interactive Mode
+
+For automation or repeatable deployments, pass everything as flags:
+
+```bash
+bash ~/OpenClaw/openclaw-postinstall.sh \
+  --provider anthropic-api-key --provider-key sk-ant-... \
+  --provider gemini-api-key --provider-key AIza... \
+  --provider ollama \
+  --primary-model anthropic/claude-sonnet-4-5 \
+  --fallback-models "gemini/gemini-2.5-flash, ollama/llama4" \
+  --heartbeat-model openai/gpt-5-nano \
+  --openai-key sk-... \
+  --telegram-token 123456:ABCdef... \
+  --telegram-user-id 5361915599 \
+  --tailscale-auth-key tskey-auth-... \
+  --non-interactive
+```
+
+Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama and custom endpoints need no key. Run `bash openclaw-postinstall.sh --help` for all flags.
+
+## File Structure
+
+```
+OpenClaw/
+├── openclaw.sh              # Proxmox host script (creates LXC + runs install)
+├── openclaw-install.sh      # Install script (standalone or via Proxmox host)
+├── openclaw-postinstall.sh  # Post-install wizard (AI providers, Telegram, Tailscale)
+├── templates/
+│   ├── openclaw.json.tpl    # Config template (gateway token auto-generated)
+│   ├── soul.md.tpl          # Agent personality scaffold
+│   └── agents.md.tpl        # Behavioral rules + prompt injection defense
+└── README.md
+```
+
+## What Gets Installed Where
+
+| Path | Purpose |
+|------|---------|
+| `~/.openclaw/openclaw.json` | Main config (mode 600) |
+| `~/.openclaw/.env` | API keys for providers and embeddings (mode 600) |
+| `~/.openclaw/agents/main/agent/auth-profiles.json` | Registered provider credentials |
+| `~/.openclaw/workspace/SOUL.md` | Agent personality |
+| `~/.openclaw/workspace/AGENTS.md` | Behavioral rules and security instructions |
+| `~/.openclaw/workspace/USER.md` | User context for personalization |
+| `~/.openclaw/workspace/skills/memory-lancedb-hybrid/` | Memory plugin |
+| `~/.config/systemd/user/openclaw-gateway.service` | Gateway systemd service |
+| `/etc/profile.d/openclaw.sh` | System-wide PATH for `openclaw` CLI |
+| `~/bin/backup-openclaw.sh` | Daily backup script |
+| `~/backups/` | Backup tarballs (7-day retention) |
 
 ## Customizing Templates
 
-Edit the files in `templates/` before running the script to customize what ships with every container.
+Edit files in `templates/` before running the install script to change what ships with every new container.
 
 ### openclaw.json.tpl
 
-The config template uses placeholder tokens:
-- `__GATEWAY_TOKEN__` -- auto-generated during install (random hex)
-- `__TELEGRAM_BOT_TOKEN__` -- must be set manually after install
+Config template with placeholder tokens:
+- `__GATEWAY_TOKEN__` — auto-replaced with random hex during install
+- `__TELEGRAM_BOT_TOKEN__` — set by the post-install wizard or manually
 
-Default model config follows the coordinator/worker pattern from the digitalknk runbook:
-cheap primary (Sonnet), explicit fallback chain, concurrency caps, context pruning with 6hr TTL, compaction flush at 40k tokens.
+Default model config: cheap primary (Sonnet 4.5), explicit fallback chain, 4 concurrent agents, 8 concurrent subagents, context pruning with 6h TTL, compaction flush at 40k tokens.
 
 ### soul.md.tpl
 
-Agent personality and safety guardrails. Edit this to define who each agent is.
+Agent personality scaffold. Define who the agent is, its communication style, and safety guardrails.
 
 ### agents.md.tpl
 
-Behavioral rules and prompt injection defense. Ships with detection patterns for common attacks.
+Behavioral rules and prompt injection defense. Ships with detection patterns for common attacks (instruction override, encoded payloads, typoglycemia, social engineering).
 
-## NemoClaw (Future)
+## Useful Commands
 
-The script architecture supports a future `--nemoclaw` flag that would switch from LXC creation to VM creation and wrap the install with NVIDIA's NemoClaw security stack. Not implemented yet (NemoClaw is still alpha as of March 2026).
+```bash
+openclaw doctor --fix       # Health check and auto-fix
+openclaw gateway status     # Gateway service info
+openclaw logs --follow      # Real-time logs
+openclaw tui                # Terminal UI
+openclaw configure          # Interactive config wizard
+openclaw skills list        # Available skills
+openclaw security audit     # Security posture check
+```
+
+Shell aliases (added by install):
+```bash
+openclaw-update   # Update OpenClaw + restart gateway
+openclaw-logs     # Shortcut for openclaw logs --follow
+openclaw-status   # Shortcut for openclaw gateway status
+openclaw-backup   # Run backup now
+```
 
 ## Requirements
 
-**Proxmox mode** (`pveClaw.ivantsov.tech`):
+**Proxmox mode** (`openclaw.sh`):
 - Proxmox VE 7.x or 8.x
 - Root access on the Proxmox host
-- Internet access from the container (for package downloads)
+- Internet access from the host and container
 - Ubuntu 24.04 LTS template (auto-downloaded if missing)
 
-**Standalone mode** (`setupClaw.ivantsov.tech`):
+**Standalone mode** (`openclaw-install.sh`):
 - Debian/Ubuntu-based Linux (tested on Ubuntu 24.04)
 - Root access
-- Internet access (for package downloads and template fetch)
+- Internet access
+
+**Post-install wizard** (`openclaw-postinstall.sh`):
+- Run as the `claw` user (not root)
+- OpenClaw must be installed and in PATH

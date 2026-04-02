@@ -212,12 +212,32 @@ step_install_openclaw() {
      export OPENCLAW_NO_PROMPT=1 && \
      curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-prompt --no-onboard' \
     </dev/null 2>&1 | tail -5
-  # Set PATH for OpenClaw binaries
+  # Set PATH for OpenClaw binaries — use /etc/profile.d/ so it survives dotfile replacement
+  cat > /etc/profile.d/openclaw.sh << 'OCPROFILE'
+# OpenClaw PATH (system-wide fallback — survives dotfile replacement)
+if [ -d "${HOME}/.npm-global/bin" ]; then
+  case ":${PATH}:" in
+    *":${HOME}/.npm-global/bin:"*) ;;
+    *) export PATH="${HOME}/.npm-global/bin:${PATH}" ;;
+  esac
+  export NODE_PATH="${HOME}/.npm-global/lib/node_modules"
+fi
+
+# Performance tuning for LXC/VM hosts
+export NODE_COMPILE_CACHE="/var/tmp/openclaw-compile-cache"
+export OPENCLAW_NO_RESPAWN=1
+OCPROFILE
+  chmod 644 /etc/profile.d/openclaw.sh
+  mkdir -p /var/tmp/openclaw-compile-cache
+
+  # Also add to .bashrc as a convenience (but profile.d is the authoritative source)
   sudo -u "$CLAW_USER" bash -c 'cat >> ~/.bashrc << "OCPATH"
 
 # OpenClaw
 export PATH="${HOME}/.npm-global/bin:${PATH}"
 export NODE_PATH="${HOME}/.npm-global/lib/node_modules"
+export NODE_COMPILE_CACHE="/var/tmp/openclaw-compile-cache"
+export OPENCLAW_NO_RESPAWN=1
 OCPATH'
 
   # Verify OpenClaw actually installed
@@ -459,16 +479,21 @@ BACKUP
   " || true
   msg_ok "Config directory git-tracked (rollback ready)"
 
-  # -- Update alias ------------------------------------------------------------
-  sudo -u "$CLAW_USER" bash -c 'cat >> ~/.bashrc << "ALIASES"
-
+  # -- Update alias (add to both .bashrc and .zshrc if it exists) -------------
+  local ALIAS_BLOCK='
 # OpenClaw shortcuts
 alias openclaw-update="pnpm add -g openclaw@latest && systemctl --user restart openclaw-gateway.service"
 alias openclaw-logs="openclaw logs --follow"
 alias openclaw-status="openclaw gateway status"
-alias openclaw-backup="${HOME}/bin/backup-openclaw.sh"
-ALIASES'
-  msg_ok "Shell aliases added (openclaw-update, openclaw-logs, etc.)"
+alias openclaw-backup="${HOME}/bin/backup-openclaw.sh"'
+
+  sudo -u "$CLAW_USER" bash -c "echo '$ALIAS_BLOCK' >> ~/.bashrc"
+  if [[ -f "${CLAW_HOME}/.zshrc" ]]; then
+    sudo -u "$CLAW_USER" bash -c "echo '$ALIAS_BLOCK' >> ~/.zshrc"
+    msg_ok "Shell aliases added to .bashrc and .zshrc"
+  else
+    msg_ok "Shell aliases added to .bashrc"
+  fi
 }
 
 # =============================================================================
@@ -544,28 +569,19 @@ step_validate() {
   echo -e "  3. ${RD}Change the default password immediately:${CL}"
   echo -e "     ${BL}passwd${CL}"
   echo ""
-  echo -e "  4. Set your API keys:"
-  echo -e "     ${BL}nano ~/.openclaw/.env${CL}"
-  echo -e "     Add: ANTHROPIC_API_KEY, OPENAI_API_KEY (for embeddings)"
-  echo -e "     Optional: OPENROUTER_API_KEY (for fallback models)"
+  echo -e "  4. ${GN}Run the post-install wizard (sets up everything else):${CL}"
+  echo -e "     ${BL}bash ~/OpenClaw/openclaw-postinstall.sh${CL}"
   echo ""
-  echo -e "  5. Configure your Telegram bot:"
-  echo -e "     ${BL}nano ~/.openclaw/openclaw.json${CL}"
-  echo -e "     Replace ${YW}__TELEGRAM_BOT_TOKEN__${CL} with your bot token from @BotFather"
+  echo -e "     The wizard handles: AI providers, model selection, embeddings key,"
+  echo -e "     Telegram bot token, Tailscale auth, and agent personality."
   echo ""
-  echo -e "  6. Edit your agent personality:"
-  echo -e "     ${BL}nano ~/.openclaw/workspace/SOUL.md${CL}"
-  echo ""
-  echo -e "  7. Start Tailscale:"
-  echo -e "     ${BL}sudo tailscale up${CL}"
-  echo -e "     ${BL}sudo tailscale serve --bg 18789${CL}"
-  echo ""
-  echo -e "  8. Start the gateway:"
-  echo -e "     ${BL}openclaw gateway start${CL}"
-  echo ""
-  echo -e "  9. Pair Telegram and verify:"
-  echo -e "     ${BL}openclaw onboard${CL}"
-  echo -e "     ${BL}openclaw doctor --fix${CL}"
+  echo -e "     Or do it all in one shot:"
+  echo -e "     ${BL}bash ~/OpenClaw/openclaw-postinstall.sh \\${CL}"
+  echo -e "     ${BL}  --provider anthropic-api-key --provider-key sk-ant-... \\${CL}"
+  echo -e "     ${BL}  --openai-key sk-... \\${CL}"
+  echo -e "     ${BL}  --telegram-token 123456:ABC... \\${CL}"
+  echo -e "     ${BL}  --telegram-user-id YOUR_ID \\${CL}"
+  echo -e "     ${BL}  --tailscale-auth-key tskey-auth-...${CL}"
   echo ""
 }
 

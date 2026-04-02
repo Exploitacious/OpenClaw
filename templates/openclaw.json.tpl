@@ -93,7 +93,7 @@
       "dmPolicy": "pairing",
       "botToken": "__TELEGRAM_BOT_TOKEN__",
       "groupPolicy": "allowlist",
-      "streamMode": "partial"
+      "streaming": "partial"
     }
   },
   "gateway": {
