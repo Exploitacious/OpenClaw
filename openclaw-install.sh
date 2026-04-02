@@ -14,6 +14,17 @@ set -euo pipefail
 LOGFILE="/tmp/openclaw-install.log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
+# -- Error trap ----------------------------------------------------------------
+error_handler() {
+  local EXIT_CODE=$?
+  local LINE_NO=$1
+  echo ""
+  echo -e " \e[31m\xE2\x9C\x98 Install failed at line ${LINE_NO} (exit code: ${EXIT_CODE})\e[0m"
+  echo -e "   \e[33mFull log available at: ${LOGFILE}\e[0m"
+  echo -e "   \e[33mYou can re-run this script after fixing the issue.\e[0m"
+}
+trap 'error_handler $LINENO' ERR
+
 # -- Colors & Formatting -------------------------------------------------------
 GN="\e[32m"; RD="\e[31m"; BL="\e[36m"; YW="\e[33m"; CL="\e[0m"
 CM="${GN}\xE2\x9C\x94${CL}"; CROSS="${RD}\xE2\x9C\x98${CL}"
@@ -46,6 +57,17 @@ step_system_setup() {
   msg_step "Step 1/9: System update & base dependencies"
 
   export DEBIAN_FRONTEND=noninteractive
+
+  # Fix locale first (prevents "Wide character" perl warnings in Proxmox)
+  msg_info "Setting locale..."
+  apt-get update -qq >/dev/null 2>&1
+  apt-get install -y -qq locales >/dev/null 2>&1
+  sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen 2>/dev/null || true
+  locale-gen en_US.UTF-8 >/dev/null 2>&1 || true
+  update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 >/dev/null 2>&1 || true
+  export LANG=en_US.UTF-8
+  export LC_ALL=en_US.UTF-8
+  msg_ok "Locale set to en_US.UTF-8"
 
   msg_info "Updating package lists..."
   apt-get update -qq >/dev/null 2>&1

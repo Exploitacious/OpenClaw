@@ -15,6 +15,20 @@ set -euo pipefail
 # -- Remote repo base URL (for curl|bash mode) --------------------------------
 REPO_RAW="https://raw.githubusercontent.com/Exploitacious/OpenClaw/refs/heads/master"
 
+# -- Error trap (cleanup on failure) -------------------------------------------
+cleanup_on_error() {
+  local EXIT_CODE=$?
+  if [[ $EXIT_CODE -ne 0 ]]; then
+    echo ""
+    echo -e " \e[31m\xE2\x9C\x98 Script failed (exit code: ${EXIT_CODE})\e[0m"
+    if [[ -n "${CT_ID:-}" ]]; then
+      echo -e "   \e[33mContainer ${CT_ID} may have been partially created.\e[0m"
+      echo -e "   \e[33mTo clean up: pct stop ${CT_ID} && pct destroy ${CT_ID}\e[0m"
+    fi
+  fi
+}
+trap cleanup_on_error EXIT
+
 # -- Colors & Formatting ------------------------------------------------------
 BL="\e[36m"    # Cyan
 GN="\e[32m"    # Green
@@ -287,16 +301,20 @@ build_container() {
   fi
   [[ -n "${CT_VLAN:-}" ]] && NET_STRING+=",tag=${CT_VLAN}"
 
+  # Generate a temporary root password for pct create (needed for console access)
+  local ROOT_PW="openclaw"
+
   # Build pct create command
   local PCT_CMD=(
     pct create "$CT_ID" "$TEMPLATE_REF"
     --hostname "$CT_HOSTNAME"
+    --password "$ROOT_PW"
     --cores "$CT_CPU"
     --memory "$CT_RAM"
     --rootfs "${ROOTFS_STORAGE}:${CT_DISK}"
     --net0 "$NET_STRING"
     --unprivileged 1
-    --features "nesting=1"
+    --features "nesting=1,keyctl=1"
     --ostype ubuntu
     --start 0
     --onboot 1
@@ -305,8 +323,15 @@ build_container() {
   [[ -n "${CT_DNS:-}" ]] && PCT_CMD+=(--nameserver "$CT_DNS")
   [[ -n "${CT_SSH_KEY:-}" && -f "${CT_SSH_KEY:-}" ]] && PCT_CMD+=(--ssh-public-keys "$CT_SSH_KEY")
 
-  "${PCT_CMD[@]}" >/dev/null 2>&1
+  # Run pct create with visible error output
+  if ! "${PCT_CMD[@]}" 2>&1; then
+    msg_error "pct create failed. Check the error above."
+    exit 1
+  fi
   msg_ok "Container ${CT_ID} created"
+
+  # -- Set container description and tags for Proxmox UI -----------------------
+  pct set "$CT_ID" --description "OpenClaw AI Agent - Created by OpenClaw Helper Script" --tags "openclaw" 2>/dev/null || true
 
   # -- Inject cgroup config for /dev/net/tun (required for Tailscale) ----------
   msg_info "Injecting cgroup config for Tailscale support..."
@@ -337,6 +362,25 @@ CGROUP
     fi
   done
   msg_ok "Container ${CT_ID} is running"
+
+  # Wait for systemd to finish initializing inside the container
+  msg_info "Waiting for systemd to initialize..."
+  RETRIES=0
+  while ! pct exec "$CT_ID" -- systemctl is-system-running --quiet 2>/dev/null; do
+    local SYS_STATE
+    SYS_STATE=$(pct exec "$CT_ID" -- systemctl is-system-running 2>/dev/null || echo "starting")
+    # "running" or "degraded" both mean systemd is ready enough to proceed
+    if [[ "$SYS_STATE" == "running" || "$SYS_STATE" == "degraded" ]]; then
+      break
+    fi
+    sleep 2
+    RETRIES=$((RETRIES + 1))
+    if [[ $RETRIES -ge 30 ]]; then
+      msg_warn "systemd not fully ready after 60s. Continuing anyway..."
+      break
+    fi
+  done
+  msg_ok "systemd initialized"
 
   # Wait for network to come up (DHCP lease)
   if [[ "$CT_IP" == "dhcp" ]]; then
