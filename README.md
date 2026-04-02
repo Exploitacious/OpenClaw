@@ -139,6 +139,19 @@ Config template with placeholder tokens:
 
 Default model config: cheap primary (Sonnet 4.5), explicit fallback chain, 4 concurrent agents, 8 concurrent subagents, context pruning with 6h TTL, compaction flush at 40k tokens.
 
+Default security posture (single-operator, personal assistant behind Tailscale):
+
+| Setting | Value | Meaning |
+|---------|-------|---------|
+| `tools.exec.security` | `full` | All commands allowed (no allowlist) |
+| `tools.exec.ask` | `off` | Bot runs commands without prompting |
+| `tools.exec.host` | `gateway` | Commands run on the host, not sandboxed |
+| `agents.defaults.elevatedDefault` | `full` | Elevated operations (sudo, rm, etc.) run without approval |
+| `gateway.bind` | `loopback` | Gateway only reachable via localhost + Tailscale Serve |
+| `gateway.auth.allowTailscale` | `true` | Tailscale connections trusted |
+
+> **Note:** `tools.exec.security: "full"` means full *trust*, not full *restrictions*. It is the most permissive setting. If the bot claims it needs approval to run commands, it is misreading the config — no changes are needed.
+
 ### soul.md.tpl
 
 Agent personality scaffold. Define who the agent is, its communication style, and safety guardrails.
