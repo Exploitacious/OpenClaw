@@ -496,6 +496,22 @@ alias openclaw-backup="${HOME}/bin/backup-openclaw.sh"'
   else
     msg_ok "Shell aliases added to .bashrc"
   fi
+
+  # -- Clone helper repo (for postinstall wizard and future updates) -----------
+  if [[ ! -d "${CLAW_HOME}/OpenClaw" ]]; then
+    msg_info "Cloning OpenClaw helper repo..."
+    sudo -u "$CLAW_USER" git clone -q \
+      https://github.com/Exploitacious/OpenClaw.git \
+      "${CLAW_HOME}/OpenClaw" 2>/dev/null || {
+        msg_warn "Repo clone failed. Post-install wizard can be fetched manually."
+        msg_warn "Run: git clone https://github.com/Exploitacious/OpenClaw.git ~/OpenClaw"
+      }
+    msg_ok "Helper repo cloned to ~/OpenClaw (includes post-install wizard)"
+  else
+    msg_info "Updating existing OpenClaw helper repo..."
+    sudo -u "$CLAW_USER" bash -c "cd ${CLAW_HOME}/OpenClaw && git pull -q" 2>/dev/null || true
+    msg_ok "Helper repo updated"
+  fi
 }
 
 # =============================================================================
@@ -588,14 +604,101 @@ step_validate() {
 }
 
 # =============================================================================
+# Preflight Checks
+# =============================================================================
+preflight_checks() {
+  echo ""
+  msg_step "Preflight checks"
+
+  local FAIL=false
+
+  # -- Root -------------------------------------------------------------------
+  if [[ "$(id -u)" -eq 0 ]]; then
+    msg_ok "Running as root"
+  else
+    msg_error "Must be run as root (try: sudo bash $0)"
+    FAIL=true
+  fi
+
+  # -- Distro (Debian/Ubuntu) -------------------------------------------------
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    if [[ "${ID:-}" == "ubuntu" || "${ID:-}" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]; then
+      msg_ok "Distro: ${PRETTY_NAME:-$ID}"
+    else
+      msg_error "Unsupported distro: ${PRETTY_NAME:-$ID} (need Debian/Ubuntu)"
+      FAIL=true
+    fi
+  else
+    msg_error "Cannot detect distro (/etc/os-release missing)"
+    FAIL=true
+  fi
+
+  # -- systemd as PID 1 -------------------------------------------------------
+  if [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]; then
+    msg_ok "systemd is PID 1"
+  else
+    msg_error "systemd not detected (PID 1: $(cat /proc/1/comm 2>/dev/null || echo unknown))"
+    msg_error "OpenClaw requires systemd for user services and lingering"
+    FAIL=true
+  fi
+
+  # -- curl -------------------------------------------------------------------
+  if command -v curl &>/dev/null; then
+    msg_ok "curl available"
+  else
+    msg_warn "curl not found -- will attempt to install via apt"
+  fi
+
+  # -- RAM (warn < 2GB) -------------------------------------------------------
+  local RAM_KB RAM_MB
+  RAM_KB=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')
+  RAM_MB=$(( ${RAM_KB:-0} / 1024 ))
+  if [[ "$RAM_MB" -ge 2048 ]]; then
+    msg_ok "RAM: ${RAM_MB} MB"
+  elif [[ "$RAM_MB" -ge 1024 ]]; then
+    msg_warn "RAM: ${RAM_MB} MB (2 GB+ recommended, may be tight)"
+  else
+    msg_warn "RAM: ${RAM_MB} MB (2 GB+ recommended, install may fail)"
+  fi
+
+  # -- Disk (warn < 2GB free) -------------------------------------------------
+  local DISK_FREE_KB DISK_FREE_MB
+  DISK_FREE_KB=$(df / 2>/dev/null | awk 'NR==2 {print $4}')
+  DISK_FREE_MB=$(( ${DISK_FREE_KB:-0} / 1024 ))
+  if [[ "$DISK_FREE_MB" -ge 2048 ]]; then
+    msg_ok "Free disk: ${DISK_FREE_MB} MB"
+  elif [[ "$DISK_FREE_MB" -ge 1024 ]]; then
+    msg_warn "Free disk: ${DISK_FREE_MB} MB (2 GB+ recommended)"
+  else
+    msg_warn "Free disk: ${DISK_FREE_MB} MB (2 GB+ recommended, may run out)"
+  fi
+
+  # -- Internet (quick check) -------------------------------------------------
+  if curl -fsS --max-time 5 -o /dev/null https://deb.nodesource.com 2>/dev/null; then
+    msg_ok "Internet reachable"
+  elif command -v curl &>/dev/null; then
+    msg_warn "Internet check failed (may be a firewall or DNS issue)"
+  else
+    msg_warn "Cannot verify internet (curl not yet installed)"
+  fi
+
+  # -- Bail on hard failures ---------------------------------------------------
+  if $FAIL; then
+    echo ""
+    msg_error "Preflight failed. Fix the issues above and re-run."
+    exit 1
+  fi
+
+  echo ""
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 main() {
-  # -- Root check ---------------------------------------------------------------
-  if [[ "$(id -u)" -ne 0 ]]; then
-    echo -e "${RD}This script must be run as root.${CL}" >&2
-    exit 1
-  fi
+  preflight_checks
 
   # -- Detect execution mode ----------------------------------------------------
   if [[ -n "${PUSHED_BY_HOST:-}" ]]; then
