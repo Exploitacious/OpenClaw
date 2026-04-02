@@ -54,6 +54,10 @@
   },
   "tools": {
     "profile": "full",
+    "exec": {
+      "host": "gateway",
+      "security": "full"
+    },
     "web": {
       "search": {
         "enabled": true

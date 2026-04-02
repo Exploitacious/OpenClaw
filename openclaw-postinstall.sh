@@ -792,6 +792,39 @@ step_tailscale() {
     }
     msg_ok "Tailscale Serve enabled"
   fi
+
+  # Sync OpenClaw gateway config to match Tailscale state
+  local CURRENT_TS_MODE
+  CURRENT_TS_MODE=$(jq -r '.gateway.tailscale.mode // "off"' "$OC_CONFIG" 2>/dev/null)
+  if [[ "$CURRENT_TS_MODE" != "serve" ]]; then
+    msg_info "Updating gateway config for Tailscale Serve..."
+    openclaw config set gateway.tailscale.mode serve >/dev/null 2>&1
+    openclaw config set gateway.tailscale.resetOnExit true --strict-json >/dev/null 2>&1
+    msg_ok "Gateway Tailscale mode set to 'serve'"
+  fi
+
+  # Ensure exec tool runs through the gateway (not sandbox) so it can reach the network
+  local CURRENT_EXEC_HOST
+  CURRENT_EXEC_HOST=$(jq -r '.tools.exec.host // "auto"' "$OC_CONFIG" 2>/dev/null)
+  if [[ "$CURRENT_EXEC_HOST" != "gateway" ]]; then
+    openclaw config set tools.exec.host gateway >/dev/null 2>&1
+    openclaw config set tools.exec.security full >/dev/null 2>&1
+    msg_ok "Exec tool configured to run on gateway (full access)"
+  fi
+
+  # Add the Tailscale hostname to controlUi.allowedOrigins if not already there
+  local TS_HOSTNAME
+  TS_HOSTNAME=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // ""' | sed 's/\.$//')
+  if [[ -n "$TS_HOSTNAME" ]]; then
+    local ORIGIN="https://${TS_HOSTNAME}"
+    local HAS_ORIGIN
+    HAS_ORIGIN=$(jq --arg o "$ORIGIN" '.gateway.controlUi.allowedOrigins // [] | map(select(. == $o)) | length' "$OC_CONFIG" 2>/dev/null)
+    if [[ "$HAS_ORIGIN" == "0" ]]; then
+      jq --arg o "$ORIGIN" '.gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + [$o] | unique)' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+      mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+      msg_ok "Added ${ORIGIN} to Control UI allowed origins"
+    fi
+  fi
 }
 
 # =============================================================================
@@ -894,9 +927,20 @@ print_summary() {
     ISSUES+=("Configure Telegram: openclaw config set channels.telegram.botToken TOKEN")
   fi
 
-  # Tailscale
+  # Tailscale + Dashboard URL
   if tailscale status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1; then
+    local TS_HOSTNAME_SUM
+    TS_HOSTNAME_SUM=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // ""' | sed 's/\.$//')
     msg_ok "Tailscale: connected ($(tailscale ip -4 2>/dev/null))"
+
+    if [[ -n "$TS_HOSTNAME_SUM" ]]; then
+      local GW_TOKEN_SUM
+      GW_TOKEN_SUM=$(jq -r '.gateway.auth.token // ""' "$OC_CONFIG" 2>/dev/null)
+      echo ""
+      echo -e "   ${GN}Dashboard URL (bookmark this):${CL}"
+      echo -e "   ${BL}https://${TS_HOSTNAME_SUM}/?token=${GW_TOKEN_SUM}${CL}"
+      echo ""
+    fi
   else
     ISSUES+=("Connect Tailscale: sudo tailscale up")
   fi
