@@ -1,0 +1,120 @@
+{
+  "update": {
+    "channel": "stable"
+  },
+  "logging": {
+    "redactSensitive": "tools"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-5",
+        "fallbacks": [
+          "openai/gpt-5-mini",
+          "openrouter/google/gemini-3-flash-preview"
+        ]
+      },
+      "workspace": "~/.openclaw/workspace",
+      "memorySearch": {
+        "sources": ["memory", "sessions"],
+        "experimental": {
+          "sessionMemory": true
+        },
+        "provider": "openai",
+        "model": "text-embedding-3-small"
+      },
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "6h",
+        "keepLastAssistants": 3
+      },
+      "compaction": {
+        "mode": "default",
+        "memoryFlush": {
+          "enabled": true,
+          "softThresholdTokens": 40000,
+          "prompt": "Extract key decisions, state changes, lessons, blockers to memory/YYYY-MM-DD.md. Format: ## [HH:MM] Topic. Skip routine work. NO_FLUSH if nothing important.",
+          "systemPrompt": "Compacting session context. Extract only what's worth remembering. No fluff."
+        }
+      },
+      "heartbeat": {
+        "model": "openai/gpt-5-nano"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true
+      }
+    ]
+  },
+  "tools": {
+    "profile": "full",
+    "web": {
+      "search": {
+        "enabled": true
+      },
+      "fetch": {
+        "enabled": true
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "command-logger": {
+          "enabled": true
+        },
+        "boot-md": {
+          "enabled": true
+        },
+        "session-memory": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "__TELEGRAM_BOT_TOKEN__",
+      "groupPolicy": "allowlist",
+      "streamMode": "partial"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "__GATEWAY_TOKEN__",
+      "allowTailscale": true
+    },
+    "tailscale": {
+      "mode": "serve",
+      "resetOnExit": true
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      }
+    }
+  }
+}
