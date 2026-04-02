@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 
 # =============================================================================
-# OpenClaw Install Script (runs INSIDE the LXC container)
-# Called by openclaw.sh after container creation
+# OpenClaw Install Script
+#
+# Can be run two ways:
+#   1. Pushed into an LXC by openclaw.sh (templates pre-staged in /tmp)
+#   2. Directly on any Linux machine via curl|bash:
+#      bash -c "$(curl -fsSL setupClaw.ivantsov.tech)"
 #
 # Handles: user creation, dependencies, OpenClaw install, security hardening,
 #          memory plugin, Tailscale, backups, git-tracked config, validation
 # =============================================================================
 
 set -euo pipefail
+
+# -- Remote repo base URL (for standalone curl|bash mode) ----------------------
+REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/Exploitacious/OpenClaw/refs/heads/master}"
 
 # -- Logging (all output also goes to log file for debugging) ------------------
 LOGFILE="/tmp/openclaw-install.log"
@@ -38,6 +45,27 @@ msg_step()  { printf "\n ${GN}>>>${CL} %s\n" "$1"; }
 CLAW_USER="claw"
 CLAW_HOME="/home/${CLAW_USER}"
 
+# -- Resolve a file: use local /tmp copy first, otherwise fetch from GitHub ----
+resolve_template() {
+  local TPL_NAME="$1"
+  local DEST="/tmp/${TPL_NAME}"
+
+  # Already staged (pushed by openclaw.sh or previous run)
+  if [[ -f "$DEST" ]]; then
+    return 0
+  fi
+
+  # Try fetching from GitHub
+  msg_info "Fetching ${TPL_NAME} from GitHub..."
+  if curl -fsSL "${REPO_RAW}/templates/${TPL_NAME}" -o "$DEST" 2>/dev/null; then
+    msg_ok "Downloaded ${TPL_NAME}"
+    return 0
+  else
+    msg_warn "Could not download ${TPL_NAME} -- will use built-in defaults"
+    return 1
+  fi
+}
+
 # -- Ensure XDG_RUNTIME_DIR exists for systemd user services -------------------
 ensure_user_runtime_dir() {
   local UID_VAL
@@ -54,11 +82,14 @@ ensure_user_runtime_dir() {
 # Step 1: System Update & Base Dependencies
 # =============================================================================
 step_system_setup() {
-  msg_step "Step 1/9: System update & base dependencies"
+  msg_step "Step 1/8: System update & base dependencies"
 
   export DEBIAN_FRONTEND=noninteractive
 
   # Fix locale first (prevents "Wide character" perl warnings in Proxmox)
+  # Export C.UTF-8 first to suppress bash locale warnings during setup
+  export LANG=C.UTF-8
+  export LC_ALL=C.UTF-8
   msg_info "Setting locale..."
   apt-get update -qq >/dev/null 2>&1
   apt-get install -y -qq locales >/dev/null 2>&1
@@ -103,7 +134,7 @@ step_system_setup() {
 # Step 2: Create claw User
 # =============================================================================
 step_create_user() {
-  msg_step "Step 2/9: Creating '${CLAW_USER}' user"
+  msg_step "Step 2/8: Creating '${CLAW_USER}' user"
 
   if id "$CLAW_USER" &>/dev/null; then
     msg_ok "User '${CLAW_USER}' already exists"
@@ -133,54 +164,51 @@ step_create_user() {
 }
 
 # =============================================================================
-# Step 3: Install Homebrew (as claw user)
+# Step 3: Install Node.js (if not handled by OpenClaw installer)
 # =============================================================================
-step_install_homebrew() {
-  msg_step "Step 3/9: Installing Homebrew"
+step_install_node() {
+  msg_step "Step 3/8: Ensuring Node.js is available"
 
-  if sudo -u "$CLAW_USER" bash -c 'test -d /home/linuxbrew/.linuxbrew'; then
-    msg_ok "Homebrew already installed"
-  else
-    msg_info "Installing Homebrew (this takes a minute)..."
-    sudo -u "$CLAW_USER" bash -c \
-      'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' \
-      >/dev/null 2>&1
-    msg_ok "Homebrew installed"
+  # Check if Node.js 22+ is already present
+  if command -v node &>/dev/null; then
+    local NODE_VER
+    NODE_VER=$(node --version 2>/dev/null | sed 's/v//' | cut -d. -f1)
+    if [[ "$NODE_VER" -ge 22 ]]; then
+      msg_ok "Node.js $(node --version) already installed"
+      return 0
+    fi
   fi
 
-  # Add Homebrew to claw user's PATH
-  sudo -u "$CLAW_USER" bash -c 'cat >> ~/.bashrc << "BREWPATH"
+  # Install Node.js 22.x via NodeSource (same method OpenClaw's installer uses)
+  msg_info "Installing Node.js 22.x via NodeSource..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -s -- >/dev/null 2>&1
+  apt-get install -y -qq nodejs >/dev/null 2>&1
 
-# Homebrew
-test -d ~/.linuxbrew && eval "$(~/.linuxbrew/bin/brew shellenv)"
-test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-BREWPATH'
+  if command -v node &>/dev/null; then
+    msg_ok "Node.js $(node --version) installed"
+  else
+    msg_warn "Node.js pre-install failed. OpenClaw installer will handle it."
+  fi
 
-  # Also write to .profile for non-interactive shells
-  sudo -u "$CLAW_USER" bash -c 'cat >> ~/.profile << "BREWPROF"
-
-# Homebrew
-test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-BREWPROF'
-
-  msg_info "Installing gcc via Homebrew..."
-  sudo -u "$CLAW_USER" bash -c \
-    'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew install gcc' \
-    >/dev/null 2>&1
-  msg_ok "gcc installed via Homebrew"
+  # Ensure npm global dir exists for claw user (avoids permission issues later)
+  sudo -u "$CLAW_USER" bash -c '
+    mkdir -p ~/.npm-global
+    npm config set prefix ~/.npm-global 2>/dev/null || true
+  '
+  msg_ok "npm global directory configured for claw user"
 }
 
 # =============================================================================
 # Step 4: Install OpenClaw
 # =============================================================================
 step_install_openclaw() {
-  msg_step "Step 4/9: Installing OpenClaw"
+  msg_step "Step 4/8: Installing OpenClaw"
 
   msg_info "Running OpenClaw install script..."
   # The official installer handles Node.js, npm, and build tools
   # We run it non-interactively and skip the onboarding wizard
   sudo -u "$CLAW_USER" bash -c \
-    'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && curl -fsSL https://openclaw.ai/install.sh | bash -s -- --skip-onboard' \
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && curl -fsSL https://openclaw.ai/install.sh | bash -s -- --skip-onboard' \
     2>&1 | tail -5
   # Set PATH for OpenClaw binaries
   sudo -u "$CLAW_USER" bash -c 'cat >> ~/.bashrc << "OCPATH"
@@ -192,7 +220,7 @@ OCPATH'
 
   # Verify OpenClaw actually installed
   if sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" && command -v openclaw' \
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && command -v openclaw' \
     >/dev/null 2>&1; then
     msg_ok "OpenClaw installed and binary verified"
   else
@@ -208,7 +236,7 @@ OCPATH'
   # Install the gateway as a systemd user service
   msg_info "Installing OpenClaw gateway service..."
   sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" && \
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
      export XDG_RUNTIME_DIR="/run/user/$(id -u)" && \
      openclaw gateway install' \
     >/dev/null 2>&1 || {
@@ -222,7 +250,7 @@ OCPATH'
 # Step 5: Apply Config Templates
 # =============================================================================
 step_apply_templates() {
-  msg_step "Step 5/9: Applying configuration templates"
+  msg_step "Step 5/8: Applying configuration templates"
 
   local OC_DIR="${CLAW_HOME}/.openclaw"
   local WS_DIR="${OC_DIR}/workspace"
@@ -328,13 +356,13 @@ USERMD
 # Step 6: Install Memory Plugin (LanceDB Hybrid)
 # =============================================================================
 step_install_memory() {
-  msg_step "Step 6/9: Installing memory-lancedb-hybrid plugin"
+  msg_step "Step 6/8: Installing memory-lancedb-hybrid plugin"
 
   ensure_user_runtime_dir
 
   msg_info "Installing memory plugin from ClawHub..."
   sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" && \
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
      export XDG_RUNTIME_DIR="/run/user/$(id -u)" && \
      cd ~/.openclaw/workspace && \
      mkdir -p skills && \
@@ -342,7 +370,7 @@ step_install_memory() {
     2>&1 | tail -3 || {
       msg_warn "ClawHub install failed -- trying GitHub fallback..."
       sudo -u "$CLAW_USER" bash -c \
-        'export PATH="${HOME}/.npm-global/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" && \
+        'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
          cd ~/.openclaw/workspace/skills && \
          git clone https://github.com/CortexReach/memory-lancedb-pro.git memory-lancedb-hybrid && \
          cd memory-lancedb-hybrid && \
@@ -363,7 +391,7 @@ step_install_memory() {
 # Step 7: Tailscale Setup
 # =============================================================================
 step_install_tailscale() {
-  msg_step "Step 7/9: Installing Tailscale"
+  msg_step "Step 7/8: Installing Tailscale"
 
   msg_info "Installing Tailscale..."
   curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1
@@ -382,7 +410,7 @@ step_install_tailscale() {
 # Step 8: Backup Script, Git Tracking, Cron
 # =============================================================================
 step_setup_maintenance() {
-  msg_step "Step 8/9: Setting up backups, git tracking, and cron"
+  msg_step "Step 8/8: Backups, git tracking, hardening, and validation"
 
   local OC_DIR="${CLAW_HOME}/.openclaw"
 
@@ -452,7 +480,7 @@ ALIASES'
 # Step 9: Security Hardening & Validation
 # =============================================================================
 step_validate() {
-  msg_step "Step 9/9: Security hardening & validation"
+  msg_step "Finalizing: Security hardening & validation"
 
   local OC_DIR="${CLAW_HOME}/.openclaw"
 
@@ -469,7 +497,7 @@ step_validate() {
   # -- Run openclaw doctor -----------------------------------------------------
   msg_info "Running openclaw doctor..."
   sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" && \
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
      export XDG_RUNTIME_DIR="/run/user/$(id -u)" && \
      openclaw doctor --fix' \
     2>&1 | tail -10 || true
@@ -478,7 +506,7 @@ step_validate() {
   # -- Run security audit ------------------------------------------------------
   msg_info "Running security audit..."
   sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" && \
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
      export XDG_RUNTIME_DIR="/run/user/$(id -u)" && \
      openclaw security audit --deep' \
     2>&1 | tail -10 || true
@@ -514,15 +542,40 @@ step_validate() {
 # Main
 # =============================================================================
 main() {
-  echo ""
-  echo "==========================================="
-  echo "  OpenClaw Container Setup"
-  echo "==========================================="
-  echo ""
+  # -- Root check ---------------------------------------------------------------
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo -e "${RD}This script must be run as root.${CL}" >&2
+    exit 1
+  fi
+
+  # -- Detect execution mode ----------------------------------------------------
+  if [[ -n "${PUSHED_BY_HOST:-}" ]]; then
+    # Called by openclaw.sh — templates already staged in /tmp
+    echo ""
+    echo "==========================================="
+    echo "  OpenClaw Container Setup (via PVE host)"
+    echo "==========================================="
+    echo ""
+  else
+    # Standalone mode — running directly on an existing machine
+    echo ""
+    echo "==========================================="
+    echo "  OpenClaw Standalone Setup"
+    echo "==========================================="
+    echo ""
+    msg_info "Running in standalone mode (not via Proxmox helper)"
+    msg_info "Templates will be fetched from GitHub if not present"
+    echo ""
+
+    # Pre-fetch templates so step_apply_templates finds them in /tmp
+    for tpl in openclaw.json.tpl soul.md.tpl agents.md.tpl; do
+      resolve_template "$tpl" || true
+    done
+  fi
 
   step_system_setup
   step_create_user
-  step_install_homebrew
+  step_install_node
   step_install_openclaw
   step_apply_templates
   step_install_memory

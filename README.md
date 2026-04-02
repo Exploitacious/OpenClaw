@@ -1,14 +1,13 @@
-# OpenClaw Proxmox Helper Script
+# OpenClaw Helper Scripts
 
-Automates the creation and configuration of Proxmox LXC containers running OpenClaw.
+Automates the setup of OpenClaw on Proxmox LXC containers or any existing Linux machine.
 
 ## What It Does
 
-One command creates a fully configured LXC container with:
+One command gives you a fully configured OpenClaw environment with:
 
-- Ubuntu 24.04 LTS (unprivileged + nesting)
+- Ubuntu 24.04 LTS base (Node.js 22.x via NodeSource, build-essential)
 - Dedicated `claw` user with systemd lingering
-- Homebrew + gcc build toolchain
 - OpenClaw installed with gateway service
 - Hardened `openclaw.json` with sane defaults (coordinator/worker model pattern, fallback chains, concurrency caps, context pruning, compaction)
 - Memory plugin (memory-lancedb-hybrid) for persistent semantic + keyword memory
@@ -21,30 +20,44 @@ One command creates a fully configured LXC container with:
 
 ## Usage
 
-**One-liner (recommended):** Run directly on your Proxmox host:
+### New Proxmox LXC (creates a container and installs everything)
+
+Run on your Proxmox host:
 
 ```bash
 bash -c "$(curl -fsSL pveClaw.ivantsov.tech)"
 ```
 
-The script automatically downloads the install script and templates from GitHub when run remotely. No need to clone the repo first.
+The script presents a dialog-based TUI with Simple (recommended) and Advanced modes, creates an LXC container, then runs the install script inside it.
 
-**Local:** If you prefer to clone first or want to customize templates before running:
+### Existing Linux Machine (installs on what you've already got)
+
+Run directly on any Debian/Ubuntu machine (including an existing LXC container):
+
+```bash
+bash -c "$(curl -fsSL setupClaw.ivantsov.tech)"
+```
+
+This runs the install script in standalone mode. Templates are fetched from GitHub automatically. Must be run as root.
+
+### Local Clone
+
+If you prefer to clone first or want to customize templates before running:
 
 ```bash
 git clone https://github.com/Exploitacious/OpenClaw.git
 cd OpenClaw
-bash openclaw.sh
+bash openclaw.sh          # Proxmox host — creates LXC + installs
+# -- or --
+bash openclaw-install.sh  # Inside a machine — installs directly
 ```
-
-The script presents a dialog-based TUI with Simple (recommended) and Advanced modes.
 
 ## File Structure
 
 ```
 openclaw-helper/
-├── openclaw.sh              # Host-side script (run on Proxmox)
-├── openclaw-install.sh      # Container install script (pushed automatically)
+├── openclaw.sh              # Proxmox host script (creates LXC + runs install)
+├── openclaw-install.sh      # Install script (works standalone or via PVE host)
 ├── templates/
 │   ├── openclaw.json.tpl    # Config template with security defaults
 │   ├── soul.md.tpl          # Agent personality scaffold
@@ -89,7 +102,13 @@ The script architecture supports a future `--nemoclaw` flag that would switch fr
 
 ## Requirements
 
+**Proxmox mode** (`pveClaw.ivantsov.tech`):
 - Proxmox VE 7.x or 8.x
 - Root access on the Proxmox host
 - Internet access from the container (for package downloads)
 - Ubuntu 24.04 LTS template (auto-downloaded if missing)
+
+**Standalone mode** (`setupClaw.ivantsov.tech`):
+- Debian/Ubuntu-based Linux (tested on Ubuntu 24.04)
+- Root access
+- Internet access (for package downloads and template fetch)

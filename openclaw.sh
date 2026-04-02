@@ -463,7 +463,7 @@ run_install() {
 
   msg_info "Running install script inside container (this takes a few minutes)..."
   echo ""
-  pct exec "$CT_ID" -- bash /tmp/openclaw-install.sh
+  pct exec "$CT_ID" -- env PUSHED_BY_HOST=1 bash /tmp/openclaw-install.sh
 }
 
 # -- Summary -------------------------------------------------------------------
