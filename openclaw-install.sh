@@ -205,11 +205,13 @@ step_install_openclaw() {
   msg_step "Step 4/8: Installing OpenClaw"
 
   msg_info "Running OpenClaw install script..."
-  # The official installer handles Node.js, npm, and build tools
-  # We run it non-interactively and skip the onboarding wizard
+  # Use --no-prompt --no-onboard to suppress all interactive prompts
+  # (same approach NemoClaw uses; OPENCLAW_NO_PROMPT=1 as belt-and-suspenders)
   sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:${PATH}" && curl -fsSL https://openclaw.ai/install.sh | bash -s -- --skip-onboard' \
-    2>&1 | tail -5
+    'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
+     export OPENCLAW_NO_PROMPT=1 && \
+     curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-prompt --no-onboard' \
+    </dev/null 2>&1 | tail -5
   # Set PATH for OpenClaw binaries
   sudo -u "$CLAW_USER" bash -c 'cat >> ~/.bashrc << "OCPATH"
 
