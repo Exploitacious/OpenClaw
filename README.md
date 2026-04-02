@@ -18,7 +18,7 @@ One command creates a ready-to-use OpenClaw environment:
 - System-wide PATH via `/etc/profile.d/openclaw.sh` (survives dotfile replacement)
 - Node compile cache and `OPENCLAW_NO_RESPAWN` for faster CLI starts on LXC/VM hosts
 
-After install, a post-install wizard handles everything that needs human input: AI providers, model selection, API keys, Telegram bot, and Tailscale auth.
+After install, a post-install wizard handles everything that needs human input: AI providers, model roles, API keys, Telegram bot, Tailscale auth — then launches straight into `openclaw onboard` to hatch the bot.
 
 ## Quick Start
 
@@ -69,8 +69,9 @@ The wizard walks through six steps interactively:
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
+| Onboard | Launches `openclaw onboard` TUI to pair Telegram and hatch the bot |
 
-All steps detect existing config and skip what's already done. Re-run safely at any time.
+All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard hands off to the interactive `openclaw onboard` TUI so you can pair your Telegram bot and verify everything works — no extra commands needed.
 
 ### Scripted / Non-Interactive Mode
 
@@ -92,7 +93,7 @@ bash ~/OpenClaw/openclaw-postinstall.sh \
   --non-interactive
 ```
 
-Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. Run `bash openclaw-postinstall.sh --help` for all flags.
+Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, the onboard step is skipped (run `openclaw onboard` separately). Run `bash openclaw-postinstall.sh --help` for all flags.
 
 ## File Structure
 
@@ -100,7 +101,7 @@ Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama s
 OpenClaw/
 ├── openclaw.sh              # Proxmox host script (creates LXC + runs install)
 ├── openclaw-install.sh      # Install script (standalone or via Proxmox host)
-├── openclaw-postinstall.sh  # Post-install wizard (AI providers, Telegram, Tailscale)
+├── openclaw-postinstall.sh  # Post-install wizard (providers, models, Telegram, onboard)
 ├── templates/
 │   ├── openclaw.json.tpl    # Config template (gateway token auto-generated)
 │   ├── soul.md.tpl          # Agent personality scaffold
