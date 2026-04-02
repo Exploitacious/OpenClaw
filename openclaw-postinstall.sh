@@ -218,6 +218,18 @@ register_provider() {
   "${CMD[@]}" 2>&1 | tail -3 || true
 }
 
+# Approve all pending device pairing requests
+_approve_pending_devices() {
+  local PENDING_IDS
+  PENDING_IDS=$(openclaw devices list 2>&1 | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true)
+  if [[ -n "$PENDING_IDS" ]]; then
+    for req_id in $PENDING_IDS; do
+      openclaw devices approve "$req_id" >/dev/null 2>&1 || true
+    done
+    msg_ok "Device pairing request(s) approved"
+  fi
+}
+
 # =============================================================================
 # Preflight
 # =============================================================================
@@ -892,17 +904,53 @@ step_finalize() {
     msg_warn "Gateway status: ${GW_STATUS}"
   fi
 
-  # Auto-approve any pending device pairing requests (first-run bootstrap)
-  local PENDING_COUNT
-  PENDING_COUNT=$(openclaw devices list 2>&1 | grep -c "Pending" || true)
-  if [[ "$PENDING_COUNT" -gt 0 ]]; then
-    msg_info "Approving pending device pairing requests..."
-    local PENDING_IDS
-    PENDING_IDS=$(openclaw devices list 2>&1 | grep -oP '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true)
-    for req_id in $PENDING_IDS; do
-      openclaw devices approve "$req_id" >/dev/null 2>&1 || true
-    done
-    msg_ok "Device pairing approved"
+  # Auto-approve any pre-existing pending device pairing requests
+  _approve_pending_devices
+
+  # Interactive browser pairing (if Tailscale is up and we're not in non-interactive mode)
+  if ! $NON_INTERACTIVE && command -v tailscale &>/dev/null; then
+    local TS_DNS_PAIR
+    TS_DNS_PAIR=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // ""' | sed 's/\.$//')
+    if [[ -n "$TS_DNS_PAIR" ]]; then
+      local GW_TOKEN_PAIR
+      GW_TOKEN_PAIR=$(jq -r '.gateway.auth.token // ""' "$OC_CONFIG" 2>/dev/null)
+      local DASH_URL="https://${TS_DNS_PAIR}/#token=${GW_TOKEN_PAIR}"
+
+      echo ""
+      echo -e "   ${GN}========================================${CL}"
+      echo -e "   ${GN}  Browser Pairing${CL}"
+      echo -e "   ${GN}========================================${CL}"
+      echo ""
+      msg_info "Open this URL in your browser now:"
+      echo ""
+      echo -e "   ${BL}${DASH_URL}${CL}"
+      echo ""
+      msg_info "The page will show 'pairing required' — that's expected."
+      msg_info "Once you've loaded the page, come back here and press Enter."
+      echo ""
+      printf "   ${BL}Press Enter after opening the URL in your browser (or 's' to skip)${CL}: "
+      read -r PAIR_REPLY
+
+      if [[ "${PAIR_REPLY,,}" != "s" ]]; then
+        # Give the browser a moment to send the pairing request
+        sleep 2
+        _approve_pending_devices
+
+        # Check if it worked
+        local PAIRED_NOW
+        PAIRED_NOW=$(openclaw devices list 2>&1 | grep -c "Paired" || echo 0)
+        if [[ "$PAIRED_NOW" -gt 0 ]]; then
+          msg_ok "Browser paired! Refresh the page — you should be connected."
+        else
+          msg_warn "No pairing request detected. Try refreshing the browser, then run:"
+          msg_info "  openclaw devices list"
+          msg_info "  openclaw devices approve <request-id>"
+        fi
+      else
+        msg_info "Skipped. Pair later by opening the URL and running:"
+        msg_info "  openclaw devices list && openclaw devices approve <request-id>"
+      fi
+    fi
   fi
 
   # Doctor
@@ -976,9 +1024,7 @@ print_summary() {
       echo -e "   ${GN}Dashboard URL (bookmark this):${CL}"
       echo -e "   ${BL}https://${TS_HOSTNAME_SUM}/#token=${GW_TOKEN_SUM}${CL}"
       echo ""
-      msg_info "First visit from a new browser requires device pairing approval."
-      msg_info "Open the URL, then run: ${BL}openclaw devices list${CL}"
-      msg_info "Approve with: ${BL}openclaw devices approve <request-id>${CL}"
+      msg_dim "New browsers need device pairing: openclaw devices list && openclaw devices approve <id>"
       echo ""
     fi
   else
