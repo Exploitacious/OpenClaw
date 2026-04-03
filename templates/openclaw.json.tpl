@@ -8,10 +8,10 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-sonnet-4-5",
+        "primary": "opencode-go/MiMo-V2-Omni",
         "fallbacks": [
-          "openai/gpt-5-mini",
-          "openrouter/google/gemini-3-flash-preview"
+          "opencode-go/kimi-k2.5",
+          "opencode-go/minimax-m2.7"
         ]
       },
       "workspace": "~/.openclaw/workspace",
@@ -39,11 +39,17 @@
         }
       },
       "heartbeat": {
-        "model": "openai/gpt-5-nano"
+        "model": "opencode-go/minimax-m2.5"
       },
-      "maxConcurrent": 4,
+      "maxConcurrent": 2,
       "subagents": {
-        "maxConcurrent": 8
+        "maxConcurrent": 3,
+        "model": {
+          "primary": "opencode-go/minimax-m2.7",
+          "fallbacks": [
+            "opencode-go/minimax-m2.5"
+          ]
+        }
       }
     },
     "list": [

@@ -65,7 +65,7 @@ The wizard walks through six steps interactively:
 |------|-------------|
 | AI Providers | Menu to add Anthropic, Gemini, OpenAI, OpenCode Zen/Go, Ollama (local or remote via OpenWebUI), DeepSeek, xAI, Mistral, OpenRouter, Together, LiteLLM, or any custom OpenAI-compatible endpoint |
 | Embeddings | OpenAI API key for memory search (text-embedding-3-small) — separate from model providers |
-| Model Roles | Choose "General Intelligence" template (one strong model everywhere) or manually assign models per role: primary, fallbacks, sub-agents, heartbeat, image understanding, PDF processing |
+| Model Roles | Choose "OpenCode Go Optimized" template (tiered models with rate-limit-aware sub-agent delegation) or manually assign models per role: primary, fallbacks, sub-agents, heartbeat |
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
@@ -79,13 +79,11 @@ For automation or repeatable deployments, pass everything as flags:
 
 ```bash
 bash ~/OpenClaw/openclaw-postinstall.sh \
-  --provider anthropic-api-key --provider-key sk-ant-... \
-  --provider gemini-api-key --provider-key AIza... \
   --provider opencode-go --provider-key sk-... \
   --provider ollama --ollama-url https://openwebui.example.com \
-  --primary-model anthropic/claude-sonnet-4-5 \
-  --fallback-models "gemini/gemini-2.5-flash, opencode-go/kimi-k2.5" \
-  --heartbeat-model openai/gpt-5-nano \
+  --primary-model opencode-go/MiMo-V2-Omni \
+  --fallback-models "opencode-go/kimi-k2.5, opencode-go/minimax-m2.7" \
+  --heartbeat-model opencode-go/minimax-m2.5 \
   --openai-key sk-... \
   --telegram-token 123456:ABCdef... \
   --telegram-user-id 5361915599 \
@@ -137,7 +135,17 @@ Config template with placeholder tokens:
 - `__GATEWAY_TOKEN__` — auto-replaced with random hex during install
 - `__TELEGRAM_BOT_TOKEN__` — set by the post-install wizard or manually
 
-Default model config: cheap primary (Sonnet 4.5), explicit fallback chain, 4 concurrent agents, 8 concurrent subagents, context pruning with 6h TTL, compaction flush at 40k tokens.
+Default model config uses OpenCode Go ($10/month subscription) with a tiered architecture designed to spread rate limits across independent model pools:
+
+| Role | Model | Rate Limit | Purpose |
+|------|-------|-----------|---------|
+| Primary | MiMo-V2-Omni | ~10,900/mo | Main conversation + reasoning (multimodal) |
+| Fallback 1 | Kimi K2.5 | ~9,250/mo | Graceful degradation if Omni rate-limits |
+| Fallback 2 | MiniMax M2.7 | ~70,000/mo | High-headroom fallback, keeps lights on |
+| Sub-agents | MiniMax M2.7 | ~70,000/mo | Grunt work — research, tool calls, delegation |
+| Heartbeat | MiniMax M2.5 | ~100,000/mo | Background pings, cheapest possible |
+
+Concurrency capped at 2 main / 3 sub-agents to avoid rate-limit walls on subscription throttling. Context pruning with 6h TTL, compaction flush at 40k tokens. Sub-agents use a separate model pool from the primary to preserve conversational quota. The agent is instructed (via AGENTS.md) to escalate to MiMo-V2-Pro for complex tasks requiring deep reasoning or 1M context.
 
 Default security posture (single-operator, personal assistant behind Tailscale):
 
@@ -158,7 +166,7 @@ Agent personality scaffold. Define who the agent is, its communication style, an
 
 ### agents.md.tpl
 
-Behavioral rules and prompt injection defense. Ships with detection patterns for common attacks (instruction override, encoded payloads, typoglycemia, social engineering).
+Behavioral rules, prompt injection defense, and sub-agent delegation strategy. Ships with detection patterns for common attacks (instruction override, encoded payloads, typoglycemia, social engineering) plus tiered sub-agent guidance: default tier (MiniMax M2.7 for grunt work), escalation tier (MiMo-V2-Pro for complex reasoning / large context), and rate-limit awareness rules.
 
 ## Useful Commands
 

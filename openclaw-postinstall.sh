@@ -9,9 +9,10 @@
 # Usage:
 #   Interactive:  bash openclaw-postinstall.sh
 #   Scripted:     bash openclaw-postinstall.sh \
-#                   --provider anthropic-api-key --provider-key sk-ant-... \
-#                   --provider gemini-api-key --provider-key AIza... \
-#                   --primary-model anthropic/claude-sonnet-4-5 \
+#                   --provider opencode-go --provider-key sk-... \
+#                   --primary-model opencode-go/MiMo-V2-Omni \
+#                   --fallback-models "opencode-go/kimi-k2.5, opencode-go/minimax-m2.7" \
+#                   --heartbeat-model opencode-go/minimax-m2.5 \
 #                   --openai-key sk-... \
 #                   --telegram-token 123456:ABC... \
 #                   --telegram-user-id 5361915599 \
@@ -58,7 +59,7 @@ PROVIDER_REGISTRY=(
   "OpenAI Codex (ChatGPT OAuth)|openai-codex||openai-codex/gpt-5.4, openai-codex/gpt-5.3-codex"
   "OpenRouter|openrouter-api-key|--openrouter-api-key|openrouter/google/gemini-3-flash-preview"
   "OpenCode Zen|opencode-zen|--opencode-zen-api-key|opencode-zen/kimi-k2.5, opencode-zen/glm-5"
-  "OpenCode Go|opencode-go|--opencode-go-api-key|opencode-go/kimi-k2.5, opencode-go/minimax-m2.5"
+  "OpenCode Go|opencode-go|--opencode-go-api-key|opencode-go/MiMo-V2-Omni, opencode-go/kimi-k2.5, opencode-go/minimax-m2.7"
   "Ollama|ollama||ollama/llama4, ollama/qwen3"
   "DeepSeek|deepseek-api-key|--deepseek-api-key|deepseek/deepseek-chat, deepseek/deepseek-reasoner"
   "xAI (Grok)|xai-api-key|--xai-api-key|xai/grok-3, xai/grok-3-mini"
@@ -122,7 +123,7 @@ Embeddings:
   --openai-key <key>        OpenAI key (for memory embeddings only)
 
 Model Roles:
-  --primary-model <model>   Primary model (e.g. anthropic/claude-sonnet-4-5)
+  --primary-model <model>   Primary model (e.g. opencode-go/MiMo-V2-Omni)
   --fallback-models <csv>   Comma-separated fallback models
   --heartbeat-model <model> Heartbeat/lightweight model
 
@@ -504,21 +505,20 @@ step_model_config() {
   msg_step "Step 3/6: Model Roles"
 
   # Read current config
-  local CURRENT_PRIMARY CURRENT_FALLBACKS CURRENT_HEARTBEAT CURRENT_SUBAGENT CURRENT_IMAGE CURRENT_PDF
+  local CURRENT_PRIMARY CURRENT_FALLBACKS CURRENT_HEARTBEAT CURRENT_SUBAGENT CURRENT_CONCURRENCY CURRENT_SUB_CONCURRENCY
   CURRENT_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // "not set"' "$OC_CONFIG" 2>/dev/null)
   CURRENT_FALLBACKS=$(jq -r '(.agents.defaults.model.fallbacks // []) | join(", ")' "$OC_CONFIG" 2>/dev/null)
   CURRENT_HEARTBEAT=$(jq -r '.agents.defaults.heartbeat.model // "not set"' "$OC_CONFIG" 2>/dev/null)
   CURRENT_SUBAGENT=$(jq -r '.agents.defaults.subagents.model.primary // .agents.defaults.subagents.model // "not set"' "$OC_CONFIG" 2>/dev/null)
-  CURRENT_IMAGE=$(jq -r '.agents.defaults.imageModel.primary // .agents.defaults.imageModel // "not set"' "$OC_CONFIG" 2>/dev/null)
-  CURRENT_PDF=$(jq -r '.agents.defaults.pdfModel.primary // .agents.defaults.pdfModel // "not set"' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_CONCURRENCY=$(jq -r '.agents.defaults.maxConcurrent // "not set"' "$OC_CONFIG" 2>/dev/null)
+  CURRENT_SUB_CONCURRENCY=$(jq -r '.agents.defaults.subagents.maxConcurrent // "not set"' "$OC_CONFIG" 2>/dev/null)
 
   msg_info "Current model roles:"
   msg_dim "  Primary (conversation): ${CURRENT_PRIMARY}"
   msg_dim "  Fallbacks:              ${CURRENT_FALLBACKS:-none}"
   msg_dim "  Sub-agents (tasks):     ${CURRENT_SUBAGENT}"
   msg_dim "  Heartbeat (background): ${CURRENT_HEARTBEAT}"
-  msg_dim "  Image understanding:    ${CURRENT_IMAGE}"
-  msg_dim "  PDF processing:         ${CURRENT_PDF}"
+  msg_dim "  Concurrency:            ${CURRENT_CONCURRENCY} main / ${CURRENT_SUB_CONCURRENCY} sub-agents"
   echo ""
 
   # Non-interactive: apply flags if provided, otherwise keep current
@@ -532,7 +532,7 @@ step_model_config() {
     echo ""
     msg_info "How would you like to configure models?"
     echo ""
-    printf "   ${BL} 1${CL}) General Intelligence — one strong model everywhere, cheap fallbacks\n"
+    printf "   ${BL} 1${CL}) OpenCode Go Optimized — tiered models, rate-limit-aware sub-agents\n"
     printf "   ${BL} 2${CL}) Manual — set each role individually\n"
     printf "   ${BL} s${CL}) Skip — keep current config\n"
     echo ""
@@ -544,7 +544,7 @@ step_model_config() {
         msg_ok "Model config unchanged"
         return 0 ;;
       1)
-        _model_template_general
+        _model_template_opencode_go
         return 0 ;;
       2)
         _model_manual
@@ -559,68 +559,78 @@ step_model_config() {
   _model_apply_flags
 }
 
-# -- General Intelligence template ---------------------------------------------
-_model_template_general() {
+# -- OpenCode Go Optimized template --------------------------------------------
+_model_template_opencode_go() {
   echo ""
-  msg_info "General Intelligence template"
-  msg_dim "Uses one strong model for primary + sub-agents, with cheaper fallbacks"
-  msg_dim "and a fast model for heartbeat. Good for broad, general-purpose use."
+  msg_info "OpenCode Go Optimized template"
+  msg_dim "Tiered model architecture designed for subscription rate limits."
+  msg_dim "Primary model handles conversation; sub-agents use a separate high-quota"
+  msg_dim "model pool to preserve your conversational budget. AGENTS.md instructs"
+  msg_dim "the agent to escalate to MiMo-V2-Pro for complex tasks."
   echo ""
 
-  local GI_PRIMARY="" GI_FALLBACKS="" GI_HEARTBEAT=""
+  local OG_PRIMARY="" OG_FALLBACKS="" OG_SUBAGENT="" OG_HEARTBEAT=""
 
-  msg_info "Pick a primary model — this will handle conversations and sub-agent tasks."
-  msg_dim "Examples: anthropic/claude-sonnet-4-5, gemini/gemini-2.5-flash, opencode-go/kimi-k2.5"
-  prompt_value GI_PRIMARY "Primary model" "$CURRENT_PRIMARY"
+  msg_info "Primary model — handles direct conversation and reasoning."
+  msg_dim "Default: opencode-go/MiMo-V2-Omni (multimodal, ~10,900 req/mo)"
+  prompt_value OG_PRIMARY "Primary model" "${CURRENT_PRIMARY:-opencode-go/MiMo-V2-Omni}"
 
-  msg_info "Fallback models (comma-separated) — used when primary is down or rate-limited."
-  msg_dim "Tip: mix providers for resilience (e.g. a Gemini + an OpenRouter model)"
-  prompt_value GI_FALLBACKS "Fallback models" "$CURRENT_FALLBACKS"
+  msg_info "Fallback models (comma-separated) — used when primary hits rate limits."
+  msg_dim "Default: opencode-go/kimi-k2.5, opencode-go/minimax-m2.7"
+  prompt_value OG_FALLBACKS "Fallback models" "${CURRENT_FALLBACKS:-opencode-go/kimi-k2.5, opencode-go/minimax-m2.7}"
 
-  msg_info "Heartbeat model — cheap/fast model for background pings and lightweight tasks."
-  msg_dim "Examples: openai/gpt-5-nano, gemini/gemini-2.5-flash, opencode-go/minimax-m2.5"
-  prompt_value GI_HEARTBEAT "Heartbeat model" "$CURRENT_HEARTBEAT"
+  msg_info "Sub-agent model — used for delegated tasks (research, tool calls, grunt work)."
+  msg_dim "Default: opencode-go/minimax-m2.7 (~70,000 req/mo — high headroom)"
+  msg_dim "Uses a SEPARATE rate limit pool from primary to preserve conversation quota."
+  prompt_value OG_SUBAGENT "Sub-agent model" "${CURRENT_SUBAGENT:-opencode-go/minimax-m2.7}"
+
+  msg_info "Heartbeat model — background pings, cheapest possible."
+  msg_dim "Default: opencode-go/minimax-m2.5 (~100,000 req/mo)"
+  prompt_value OG_HEARTBEAT "Heartbeat model" "${CURRENT_HEARTBEAT:-opencode-go/minimax-m2.5}"
 
   # Apply: primary
-  if [[ -n "$GI_PRIMARY" && "$GI_PRIMARY" != "$CURRENT_PRIMARY" ]]; then
-    openclaw config set agents.defaults.model.primary "$GI_PRIMARY" >/dev/null 2>&1
-    msg_ok "Primary: ${GI_PRIMARY}"
+  if [[ -n "$OG_PRIMARY" && "$OG_PRIMARY" != "$CURRENT_PRIMARY" ]]; then
+    openclaw config set agents.defaults.model.primary "$OG_PRIMARY" >/dev/null 2>&1
+    msg_ok "Primary: ${OG_PRIMARY}"
   else
     msg_ok "Primary unchanged: ${CURRENT_PRIMARY}"
   fi
 
   # Apply: fallbacks
-  if [[ -n "$GI_FALLBACKS" && "$GI_FALLBACKS" != "$CURRENT_FALLBACKS" ]]; then
+  if [[ -n "$OG_FALLBACKS" && "$OG_FALLBACKS" != "$CURRENT_FALLBACKS" ]]; then
     local FB_JSON
-    FB_JSON=$(echo "$GI_FALLBACKS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+    FB_JSON=$(echo "$OG_FALLBACKS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
     jq --argjson fb "$FB_JSON" '.agents.defaults.model.fallbacks = $fb' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
     mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
-    msg_ok "Fallbacks: ${GI_FALLBACKS}"
+    msg_ok "Fallbacks: ${OG_FALLBACKS}"
   fi
 
-  # Apply: sub-agents = same as primary (general intelligence)
-  if [[ -n "$GI_PRIMARY" && "$GI_PRIMARY" != "$CURRENT_SUBAGENT" ]]; then
-    openclaw config set agents.defaults.subagents.model "$GI_PRIMARY" >/dev/null 2>&1
-    msg_ok "Sub-agents: ${GI_PRIMARY} (same as primary)"
+  # Apply: sub-agents (separate model from primary — key to rate limit strategy)
+  if [[ -n "$OG_SUBAGENT" && "$OG_SUBAGENT" != "$CURRENT_SUBAGENT" ]]; then
+    # Set sub-agent model with its own fallback chain
+    jq --arg sa "$OG_SUBAGENT" \
+      '.agents.defaults.subagents.model = {"primary": $sa, "fallbacks": ["opencode-go/minimax-m2.5"]}' \
+      "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Sub-agents: ${OG_SUBAGENT} (separate pool from primary)"
   fi
 
   # Apply: heartbeat
-  if [[ -n "$GI_HEARTBEAT" && "$GI_HEARTBEAT" != "$CURRENT_HEARTBEAT" ]]; then
-    openclaw config set agents.defaults.heartbeat.model "$GI_HEARTBEAT" >/dev/null 2>&1
-    msg_ok "Heartbeat: ${GI_HEARTBEAT}"
+  if [[ -n "$OG_HEARTBEAT" && "$OG_HEARTBEAT" != "$CURRENT_HEARTBEAT" ]]; then
+    openclaw config set agents.defaults.heartbeat.model "$OG_HEARTBEAT" >/dev/null 2>&1
+    msg_ok "Heartbeat: ${OG_HEARTBEAT}"
   else
     msg_ok "Heartbeat unchanged: ${CURRENT_HEARTBEAT}"
   fi
 
-  # Image + PDF: inherit primary (good general-purpose default)
-  if [[ -n "$GI_PRIMARY" ]]; then
-    openclaw config set agents.defaults.imageModel "$GI_PRIMARY" >/dev/null 2>&1
-    openclaw config set agents.defaults.pdfModel "$GI_PRIMARY" >/dev/null 2>&1
-    msg_ok "Image + PDF: ${GI_PRIMARY} (inherits primary)"
-  fi
+  # Apply: concurrency caps (subscription-safe)
+  jq '.agents.defaults.maxConcurrent = 2 | .agents.defaults.subagents.maxConcurrent = 3' \
+    "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+  mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+  msg_ok "Concurrency: 2 main / 3 sub-agents (subscription-safe)"
 
   echo ""
-  msg_ok "General Intelligence template applied"
+  msg_ok "OpenCode Go Optimized template applied"
 }
 
 # -- Manual per-role config ----------------------------------------------------
@@ -655,11 +665,15 @@ _model_manual() {
 
   # Sub-agents
   local M_SUBAGENT=""
-  msg_info "Sub-agents — model for spawned background tasks."
-  msg_dim "Can be cheaper than primary. Leave blank to inherit primary."
+  msg_info "Sub-agents — model for delegated tasks (research, tool calls, grunt work)."
+  msg_dim "Use a high-quota model to avoid eating into primary's rate limit."
+  msg_dim "Default: opencode-go/minimax-m2.7 (~70k req/mo)"
   prompt_value M_SUBAGENT "Sub-agent model" "$CURRENT_SUBAGENT"
   if [[ -n "$M_SUBAGENT" && "$M_SUBAGENT" != "$CURRENT_SUBAGENT" ]]; then
-    openclaw config set agents.defaults.subagents.model "$M_SUBAGENT" >/dev/null 2>&1
+    jq --arg sa "$M_SUBAGENT" \
+      '.agents.defaults.subagents.model = {"primary": $sa, "fallbacks": ["opencode-go/minimax-m2.5"]}' \
+      "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
     msg_ok "Sub-agents: ${M_SUBAGENT}"
   fi
 
@@ -670,24 +684,6 @@ _model_manual() {
   if [[ -n "$M_HEARTBEAT" && "$M_HEARTBEAT" != "$CURRENT_HEARTBEAT" ]]; then
     openclaw config set agents.defaults.heartbeat.model "$M_HEARTBEAT" >/dev/null 2>&1
     msg_ok "Heartbeat: ${M_HEARTBEAT}"
-  fi
-
-  # Image understanding
-  local M_IMAGE=""
-  msg_info "Image understanding — vision model for analyzing images."
-  prompt_value M_IMAGE "Image model" "$CURRENT_IMAGE"
-  if [[ -n "$M_IMAGE" && "$M_IMAGE" != "$CURRENT_IMAGE" ]]; then
-    openclaw config set agents.defaults.imageModel "$M_IMAGE" >/dev/null 2>&1
-    msg_ok "Image: ${M_IMAGE}"
-  fi
-
-  # PDF
-  local M_PDF=""
-  msg_info "PDF processing — model for reading and analyzing PDFs."
-  prompt_value M_PDF "PDF model" "$CURRENT_PDF"
-  if [[ -n "$M_PDF" && "$M_PDF" != "$CURRENT_PDF" ]]; then
-    openclaw config set agents.defaults.pdfModel "$M_PDF" >/dev/null 2>&1
-    msg_ok "PDF: ${M_PDF}"
   fi
 
   echo ""
