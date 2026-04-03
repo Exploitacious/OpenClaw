@@ -18,7 +18,7 @@ One command creates a ready-to-use OpenClaw environment:
 - System-wide PATH via `/etc/profile.d/openclaw.sh` (survives dotfile replacement)
 - Node compile cache and `OPENCLAW_NO_RESPAWN` for faster CLI starts on LXC/VM hosts
 
-After install, a post-install wizard handles everything that needs human input: AI providers, model roles, API keys, Telegram bot, Tailscale auth — then temporarily swaps to an OpenAI model, launches `openclaw onboard` to hatch the bot, and restores the production model afterward.
+After install, a post-install wizard handles everything that needs human input: AI providers, model roles, API keys, Telegram bot, Tailscale auth — then seeds BOOTSTRAP.md, swaps to an OpenAI model, launches the TUI to hatch the bot, and restores the production model afterward.
 
 ## Quick Start
 
@@ -69,11 +69,11 @@ The wizard walks through six steps interactively:
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | Hook enablement, gateway restart, `openclaw doctor --fix`, git commit |
-| Launch | Temporarily swaps to OpenAI model, runs `openclaw onboard` for hatching, then restores original model and installs memory plugin |
+| Hatch | Seeds BOOTSTRAP.md, swaps to OpenAI model, launches TUI with "Wake up, my friend!", then restores production model and installs memory plugin |
 
-All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard handles the hatching process automatically: it temporarily swaps the primary model to `openai/gpt-4o-mini` (required because Kimi K2.5 can't handle the tool-calling initialization flow), runs `openclaw onboard` for hook selection and interactive hatching, then restores the original model and installs the memory plugin. During the hatch, the bot says "Wake up, my friend..." and asks you questions to build its personality (SOUL.md) interactively. Do not pre-write SOUL.md — the hatching process generates it.
+All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard handles the hatching process directly — no `openclaw onboard` involved. It copies BOOTSTRAP.md from the shipped OpenClaw template into the workspace, temporarily swaps the primary model to `openai/gpt-4o-mini` (required because Kimi K2.5 can't handle the tool-calling initialization flow), and launches `openclaw tui --message "Wake up, my friend!"`. The bot follows the BOOTSTRAP.md instructions to interactively build its personality: SOUL.md, IDENTITY.md, and USER.md. When done, the bot deletes BOOTSTRAP.md on its own. After you exit the TUI, the script restores your production model and installs the memory plugin.
 
-> **Note:** The memory plugin is intentionally NOT installed during the base install. Any content in the workspace directory before onboard runs prevents BOOTSTRAP.md creation, which blocks the hatching dialogue. The post-install wizard installs the memory plugin after hatching completes.
+> **Note:** The memory plugin and all workspace content are intentionally NOT created before hatching. Any content in the workspace directory can trigger OpenClaw's `hasUserContent` check, which skips BOOTSTRAP.md auto-seeding and blocks the hatching dialogue. Our scripts bypass this entirely by seeding BOOTSTRAP.md manually and launching TUI directly.
 
 ### Scripted / Non-Interactive Mode
 
@@ -93,7 +93,7 @@ bash ~/OpenClaw/openclaw-postinstall.sh \
   --non-interactive
 ```
 
-Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, hatching is skipped — run `openclaw onboard` separately to hatch. Run `bash openclaw-postinstall.sh --help` for all flags.
+Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, hatching is skipped — run the wizard interactively afterward to hatch, or seed BOOTSTRAP.md manually and launch `openclaw tui --message "Wake up, my friend!"`. Run `bash openclaw-postinstall.sh --help` for all flags.
 
 ## File Structure
 
@@ -201,7 +201,7 @@ To wipe the agent's memory and personality without reinstalling OpenClaw:
 bash ~/OpenClaw/openclaw-reset.sh
 ```
 
-This wipes memory (vector store + markdown logs), sessions (conversation history), and workspace identity files (SOUL.md, AGENTS.md, IDENTITY.md, etc.). The memory plugin is temporarily moved out of the workspace so the hatching process sees a clean state. The script then temporarily swaps the primary model to `openai/gpt-4o-mini` for hatching (Kimi K2.5 can't handle the tool-calling init flow), launches `openclaw onboard` to re-hatch, and restores the original model and memory plugin afterward. All API keys, provider credentials, gateway tokens, and config settings are preserved throughout.
+This wipes memory (vector store + markdown logs), sessions (conversation history), and workspace identity files (SOUL.md, AGENTS.md, IDENTITY.md, etc.). The memory plugin is temporarily stashed outside the workspace so the hatching process sees a clean state. The script then seeds BOOTSTRAP.md from the OpenClaw template, temporarily swaps the primary model to `openai/gpt-4o-mini` (Kimi K2.5 can't handle the tool-calling init flow), and launches `openclaw tui --message "Wake up, my friend!"` to re-hatch directly — no `openclaw onboard` involved. After you exit the TUI, it restores the original model and memory plugin. All API keys, provider credentials, gateway tokens, and config settings are preserved throughout.
 
 Options:
 

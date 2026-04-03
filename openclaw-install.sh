@@ -305,7 +305,7 @@ step_apply_templates() {
   fi
 
   # NOTE: SOUL.md, AGENTS.md, and USER.md are NOT pre-written here.
-  # The hatching process (openclaw onboard → "Hatch in TUI") generates these
+  # The hatching process (BOOTSTRAP.md → TUI "Wake up, my friend!") generates these
   # interactively, creating the bot's personality from scratch. Pre-writing them
   # would bypass the "Wake up, my friend..." first-contact experience.
   #

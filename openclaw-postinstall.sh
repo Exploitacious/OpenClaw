@@ -1132,7 +1132,7 @@ step_tailscale() {
 step_finalize() {
   msg_step "Step 6/6: Finalize"
 
-  # NOTE: SOUL.md is NOT edited here. The hatching process (openclaw onboard)
+  # NOTE: SOUL.md is NOT edited here. The hatching process (BOOTSTRAP.md + TUI)
   # generates SOUL.md interactively. Editing it before hatch would bypass the
   # personality creation experience.
 
@@ -1328,7 +1328,7 @@ print_summary() {
 }
 
 # =============================================================================
-# Install Memory Plugin (after hatching, so workspace is clean for onboard)
+# Install Memory Plugin (after hatching, so workspace is clean for bootstrap)
 # =============================================================================
 install_memory_plugin() {
   msg_info "Installing memory-lancedb-hybrid plugin..."
@@ -1349,35 +1349,50 @@ install_memory_plugin() {
 }
 
 # =============================================================================
-# Create USER.md scaffold (after hatching, so workspace is clean for onboard)
+# Seed BOOTSTRAP.md from the OpenClaw shipped template
 # =============================================================================
-create_user_md() {
+# The hatching process requires two things:
+#   1. BOOTSTRAP.md exists in workspace (agent gets the hatching persona/instructions)
+#   2. TUI launched with --message "Wake up, my friend!" (first message to kick it off)
+#
+# We do NOT use `openclaw onboard` for hatching. Onboard overwrites config,
+# recreates workspace dirs, and trips the hasUserContent check that prevents
+# BOOTSTRAP.md from ever being auto-seeded. Instead, we copy the shipped
+# template directly and launch TUI ourselves.
+#
+# The agent will follow BOOTSTRAP.md's instructions to build SOUL.md,
+# IDENTITY.md, and USER.md interactively, then delete BOOTSTRAP.md when done.
+BOOTSTRAP_TEMPLATE="${HOME}/.npm-global/lib/node_modules/openclaw/docs/reference/templates/BOOTSTRAP.md"
+
+seed_bootstrap() {
   local WS_DIR="${HOME}/.openclaw/workspace"
-  if [[ ! -f "${WS_DIR}/USER.md" ]]; then
-    cat > "${WS_DIR}/USER.md" << 'USERMD'
-# User Context
+  local DEST="${WS_DIR}/BOOTSTRAP.md"
 
-## About the User
-<!-- Add information about yourself here so the agent can personalize responses -->
-
-## Preferences
-<!-- Communication style, topics of interest, tools you use -->
-
-## Active Projects
-<!-- What you're currently working on -->
-USERMD
-    msg_ok "USER.md scaffold created"
+  if [[ -f "$DEST" ]]; then
+    msg_dim "BOOTSTRAP.md already exists — skipping seed"
+    return 0
   fi
+
+  if [[ ! -f "$BOOTSTRAP_TEMPLATE" ]]; then
+    msg_warn "BOOTSTRAP.md template not found at ${BOOTSTRAP_TEMPLATE}"
+    msg_warn "OpenClaw may have moved it. Check: find ~/.npm-global -name BOOTSTRAP.md"
+    return 1
+  fi
+
+  # Copy and strip YAML frontmatter (template has --- blocks that aren't needed at runtime)
+  cp "$BOOTSTRAP_TEMPLATE" "$DEST"
+  sed -i '1{/^---$/,/^---$/d}' "$DEST"
+  chmod 644 "$DEST"
+  msg_ok "BOOTSTRAP.md seeded from OpenClaw template"
 }
 
 # =============================================================================
 # Temporarily swap primary model to OpenAI for hatching
 # =============================================================================
-# OpenClaw's hatching process requires a model that supports tool-calling
-# during initialization. Kimi K2.5 (and other OpenCode Go models) fail this
-# flow (GitHub Issue #55942). We temporarily swap to a cheap OpenAI model
-# (the key is already present for embeddings), then restore the original
-# model after hatching completes.
+# Kimi K2.5 (and other OpenCode Go models) can't handle OpenClaw's tool-calling
+# initialization flow (GitHub Issue #55942). We temporarily swap to a cheap
+# OpenAI model (the key is already present for embeddings), then restore the
+# original model after hatching completes.
 #
 # SAVED_PRIMARY is intentionally global — set by swap_model_for_hatch(),
 # consumed by restore_model_after_hatch().
@@ -1428,7 +1443,7 @@ restore_model_after_hatch() {
 }
 
 # =============================================================================
-# Launch openclaw onboard to hatch the bot
+# Hatch the bot: BOOTSTRAP.md + TUI (no onboard wizard)
 # =============================================================================
 step_launch() {
   if $NON_INTERACTIVE; then
@@ -1437,80 +1452,83 @@ step_launch() {
 
   echo ""
   msg_info "Setup complete. Ready to hatch the bot."
+  echo ""
+  echo -e "   ${GN}========================================${CL}"
+  echo -e "   ${GN}  Hatching${CL}"
+  echo -e "   ${GN}========================================${CL}"
+  echo ""
+  msg_dim "The hatching process seeds BOOTSTRAP.md into the workspace, swaps to a"
+  msg_dim "tool-calling model (OpenAI), and launches the TUI with the first message."
   msg_dim ""
-  msg_dim "OpenClaw onboard will now launch to finalize hooks and hatch your bot."
-  msg_dim "It is safe to re-run — onboard skips steps that are already configured."
+  msg_dim "The bot will say 'Wake up, my friend...' and walk you through building"
+  msg_dim "its personality: name, vibe, SOUL.md, IDENTITY.md, and USER.md."
   msg_dim ""
-  msg_dim "During onboard:"
-  msg_dim "  - Skip through provider/model steps (already configured by this wizard)"
-  msg_dim "  - Select ALL hooks when prompted (boot-md, bootstrap-extra-files, etc.)"
-  msg_dim "  - Choose 'Hatch in TUI' when asked how to hatch"
-  msg_dim "  - The bot will say 'Wake up, my friend...' and ask you questions"
-  msg_dim "  - Answer them to build the bot's personality (SOUL.md)"
+  msg_dim "When hatching is done, the bot deletes BOOTSTRAP.md on its own."
+  msg_dim "After you exit the TUI, the script restores your production model"
+  msg_dim "and installs the memory plugin."
   msg_dim ""
-  msg_warn "IMPORTANT: Do NOT message the bot on Telegram until hatching is complete."
+  msg_warn "Do NOT message the bot on Telegram until hatching is complete."
   echo ""
 
-  if prompt_yesno "Launch onboard now to hatch the bot?"; then
+  if prompt_yesno "Hatch the bot now?"; then
     echo ""
 
-    # Swap to OpenAI model for hatching (Kimi K2.5 can't handle tool-calling init)
+    # 1. Seed BOOTSTRAP.md
+    seed_bootstrap || {
+      msg_error "Cannot hatch without BOOTSTRAP.md. Fix the template path and re-run."
+      return 1
+    }
+
+    # 2. Swap to OpenAI model for hatching
     swap_model_for_hatch
 
-    msg_ok "Launching openclaw onboard..."
+    # 3. Launch TUI with the hatching message
+    msg_ok "Launching TUI — hatching begins..."
+    echo ""
+    openclaw tui --message "Wake up, my friend!"
+    local TUI_EXIT=$?
     echo ""
 
-    # Run onboard (NOT exec — we need control back for post-hatch steps)
-    openclaw onboard
-    local ONBOARD_EXIT=$?
-
-    echo ""
-
-    # Post-hatch: restore original model
+    # 4. Post-hatch: restore original model
     restore_model_after_hatch
 
-    # Post-hatch: install memory plugin now that workspace is initialized
+    # 5. Post-hatch: install memory plugin
     if [[ ! -d "${HOME}/.openclaw/workspace/skills/memory-lancedb-hybrid" ]]; then
       install_memory_plugin
     else
       msg_dim "Memory plugin already installed"
     fi
 
-    # Post-hatch: create USER.md scaffold
-    create_user_md
-
-    # Git commit post-hatch state
+    # 6. Git commit post-hatch state
     if [[ -d "${OC_DIR}/.git" ]]; then
       cd "$OC_DIR"
       git add -A 2>/dev/null || true
-      git commit -q -m "post-hatch: model restored, memory plugin installed $(date +%Y-%m-%d)" 2>/dev/null || true
+      git commit -q -m "post-hatch: personality created, model restored, memory plugin $(date +%Y-%m-%d)" 2>/dev/null || true
       msg_ok "Post-hatch state committed to git"
     fi
 
-    if [[ $ONBOARD_EXIT -eq 0 ]]; then
+    if [[ $TUI_EXIT -eq 0 ]]; then
       msg_ok "Hatching complete!"
     else
-      msg_warn "Onboard exited with code ${ONBOARD_EXIT}. You may need to re-run: openclaw onboard"
+      msg_warn "TUI exited with code ${TUI_EXIT}."
     fi
   else
     echo ""
-    msg_info "When ready, run the hatch manually:"
+    msg_info "When ready, hatch manually:"
     echo ""
-    echo -e "  ${DM}# 1. Temporarily swap model for hatching:${CL}"
+    echo -e "  ${DM}# 1. Seed the bootstrap file:${CL}"
+    echo -e "  ${BL}cp ${BOOTSTRAP_TEMPLATE} ~/.openclaw/workspace/BOOTSTRAP.md${CL}"
+    echo ""
+    echo -e "  ${DM}# 2. (If not using OpenAI) Temporarily swap model:${CL}"
     echo -e "  ${BL}openclaw config set agents.defaults.model.primary openai/gpt-4o-mini${CL}"
     echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
     echo ""
-    echo -e "  ${DM}# 2. Run onboard:${CL}"
-    echo -e "  ${BL}openclaw onboard${CL}"
+    echo -e "  ${DM}# 3. Launch TUI:${CL}"
+    echo -e "  ${BL}openclaw tui --message \"Wake up, my friend!\"${CL}"
     echo ""
-    echo -e "  ${DM}# 3. After hatching, restore your model:${CL}"
+    echo -e "  ${DM}# 4. After hatching, restore your model:${CL}"
     echo -e "  ${BL}openclaw config set agents.defaults.model.primary opencode-go/kimi-k2.5${CL}"
     echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
-    echo ""
-    echo -e "  ${DM}Other useful commands:${CL}"
-    echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
-    echo -e "  ${BL}openclaw gateway status${CL}     Gateway info"
-    echo -e "  ${BL}openclaw logs --follow${CL}      Live logs"
     echo ""
   fi
 }

@@ -290,9 +290,25 @@ msg_ok "Memory and sessions wiped"
 msg_ok "Workspace identity files removed"
 echo ""
 
-# -- Helper: model swap for hatching -------------------------------------------
-# Kimi K2.5 can't handle OpenClaw's tool-calling initialization flow (Issue #55942).
-# Temporarily swap to a cheap OpenAI model (key already present for embeddings).
+# -- Hatching helpers ----------------------------------------------------------
+BOOTSTRAP_TEMPLATE="${HOME}/.npm-global/lib/node_modules/openclaw/docs/reference/templates/BOOTSTRAP.md"
+SAVED_PRIMARY=""
+
+seed_bootstrap() {
+  local DEST="${OC_DIR}/workspace/BOOTSTRAP.md"
+
+  if [[ ! -f "$BOOTSTRAP_TEMPLATE" ]]; then
+    msg_warn "BOOTSTRAP.md template not found at ${BOOTSTRAP_TEMPLATE}"
+    msg_warn "OpenClaw may have moved it. Check: find ~/.npm-global -name BOOTSTRAP.md"
+    return 1
+  fi
+
+  cp "$BOOTSTRAP_TEMPLATE" "$DEST"
+  sed -i '1{/^---$/,/^---$/d}' "$DEST"
+  chmod 644 "$DEST"
+  msg_ok "BOOTSTRAP.md seeded from OpenClaw template"
+}
+
 swap_model_for_hatch() {
   SAVED_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // ""' "$OC_CONFIG" 2>/dev/null)
 
@@ -300,7 +316,6 @@ swap_model_for_hatch() {
     return 0
   fi
 
-  # No swap needed if already OpenAI
   if [[ "$SAVED_PRIMARY" == openai/* ]]; then
     SAVED_PRIMARY=""
     return 0
@@ -325,9 +340,7 @@ restore_model_after_hatch() {
   msg_ok "Primary model restored: ${SAVED_PRIMARY}"
 }
 
-# -- Helper: post-hatch restoration -------------------------------------------
 post_hatch_restore() {
-  # Restore primary model
   restore_model_after_hatch
 
   # Restore memory plugin from stash
@@ -335,14 +348,6 @@ post_hatch_restore() {
     mkdir -p "${OC_DIR}/workspace/skills"
     mv "$MEMORY_PLUGIN_STASH" "${OC_DIR}/workspace/skills/memory-lancedb-hybrid"
     msg_ok "Memory plugin restored"
-  fi
-
-  # Recreate USER.md scaffold
-  if [[ ! -f "${OC_DIR}/workspace/USER.md" ]]; then
-    echo "# User Context" > "${OC_DIR}/workspace/USER.md"
-    echo "" >> "${OC_DIR}/workspace/USER.md"
-    echo "Add personal context here. The agent reads this at session start." >> "${OC_DIR}/workspace/USER.md"
-    msg_ok "USER.md recreated"
   fi
 
   # Restart gateway with production model
@@ -360,84 +365,97 @@ post_hatch_restore() {
   if [[ -d "${OC_DIR}/.git" ]]; then
     cd "$OC_DIR"
     git add -A 2>/dev/null || true
-    git commit -q -m "post-hatch: model restored, plugin/files reinstated $(date +%Y-%m-%d)" 2>/dev/null || true
+    git commit -q -m "post-hatch: personality created, model restored, plugin reinstated $(date +%Y-%m-%d)" 2>/dev/null || true
     msg_ok "Post-hatch state committed to git"
   fi
 }
 
 # -- Hatch or skip -------------------------------------------------------------
 if $SKIP_HATCH; then
-  # Still need to start gateway even if skipping hatch
   msg_info "Starting gateway..."
   systemctl --user start openclaw-gateway.service 2>/dev/null || true
   sleep 3
 
-  msg_info "Skipped hatching. When ready, run the post-install wizard:"
-  echo ""
-  echo -e "  ${BL}bash ~/OpenClaw/openclaw-postinstall.sh${CL}"
-  echo ""
-  msg_dim "The wizard handles the model swap, hatching, and post-hatch restoration."
-  msg_dim "Or run manually: openclaw onboard"
-  echo ""
-
-  # Restore memory plugin even without hatching
+  # Restore memory plugin even if skipping hatch
   if [[ -n "${MEMORY_PLUGIN_STASH:-}" && -d "$MEMORY_PLUGIN_STASH" ]]; then
     mkdir -p "${OC_DIR}/workspace/skills"
     mv "$MEMORY_PLUGIN_STASH" "${OC_DIR}/workspace/skills/memory-lancedb-hybrid"
     msg_ok "Memory plugin restored"
   fi
 
+  msg_info "Skipped hatching. When ready:"
+  echo ""
+  echo -e "  ${BL}bash ~/OpenClaw/openclaw-postinstall.sh${CL}   (recommended — handles everything)"
+  echo ""
+  echo -e "  ${DM}Or manually:${CL}"
+  echo -e "  ${BL}cp ${BOOTSTRAP_TEMPLATE} ~/.openclaw/workspace/BOOTSTRAP.md${CL}"
+  echo -e "  ${BL}openclaw tui --message \"Wake up, my friend!\"${CL}"
+  echo ""
   exit 0
 fi
 
-msg_info "OpenClaw onboard will now launch to re-hatch the bot."
-msg_dim "Skip through provider/model steps (already configured)."
-msg_dim "Select ALL hooks when prompted. Choose 'Hatch in TUI'."
-msg_dim "The bot will say 'Wake up, my friend...' and ask you questions"
-msg_dim "to build its personality (SOUL.md) from scratch."
+echo ""
+echo -e "   ${GN}========================================${CL}"
+echo -e "   ${GN}  Re-Hatching${CL}"
+echo -e "   ${GN}========================================${CL}"
+echo ""
+msg_dim "The bot will say 'Wake up, my friend...' and walk you through building"
+msg_dim "its personality from scratch: name, vibe, SOUL.md, IDENTITY.md."
+msg_dim ""
+msg_dim "When done, the bot deletes BOOTSTRAP.md on its own. After you exit"
+msg_dim "the TUI, the script restores your production model and memory plugin."
 msg_dim ""
 msg_warn "Do NOT message the bot on Telegram until hatching is complete."
 echo ""
 
-printf "   ${BL}Press Enter to launch onboard (or 's' to skip)${CL}: "
+printf "   ${BL}Press Enter to hatch (or 's' to skip)${CL}: "
 read -r HATCH_REPLY
 
 if [[ "${HATCH_REPLY,,}" != "s" ]]; then
   echo ""
 
-  # Swap model for hatching
+  # 1. Seed BOOTSTRAP.md
+  seed_bootstrap || {
+    msg_error "Cannot hatch without BOOTSTRAP.md. Fix the template path and re-run."
+    # Restore memory plugin before exiting
+    if [[ -n "${MEMORY_PLUGIN_STASH:-}" && -d "$MEMORY_PLUGIN_STASH" ]]; then
+      mkdir -p "${OC_DIR}/workspace/skills"
+      mv "$MEMORY_PLUGIN_STASH" "${OC_DIR}/workspace/skills/memory-lancedb-hybrid"
+    fi
+    exit 1
+  }
+
+  # 2. Swap to OpenAI model for hatching
   swap_model_for_hatch
 
-  # Start gateway with hatch model
+  # 3. Start gateway with hatch model
   msg_info "Starting gateway..."
   systemctl --user start openclaw-gateway.service 2>/dev/null || true
   sleep 3
 
-  msg_ok "Launching openclaw onboard..."
+  # 4. Launch TUI with the hatching message
+  msg_ok "Launching TUI — hatching begins..."
+  echo ""
+  openclaw tui --message "Wake up, my friend!"
+  TUI_EXIT=$?
   echo ""
 
-  # Run onboard (NOT exec — we need post-hatch steps)
-  openclaw onboard
-  ONBOARD_EXIT=$?
-
-  echo ""
-
-  # Post-hatch restoration
+  # 5. Post-hatch restoration
   post_hatch_restore
 
-  if [[ $ONBOARD_EXIT -eq 0 ]]; then
+  if [[ $TUI_EXIT -eq 0 ]]; then
     echo ""
     echo -e "${GN}============================================${CL}"
     echo -e "${GN}  Re-Hatch Complete${CL}"
     echo -e "${GN}============================================${CL}"
     echo ""
   else
-    msg_warn "Onboard exited with code ${ONBOARD_EXIT}. You may need to re-run: openclaw onboard"
+    msg_warn "TUI exited with code ${TUI_EXIT}."
   fi
 else
   echo ""
 
-  # Restore memory plugin if skipping
+  # Restore memory plugin if skipping hatch
   if [[ -n "${MEMORY_PLUGIN_STASH:-}" && -d "$MEMORY_PLUGIN_STASH" ]]; then
     mkdir -p "${OC_DIR}/workspace/skills"
     mv "$MEMORY_PLUGIN_STASH" "${OC_DIR}/workspace/skills/memory-lancedb-hybrid"
@@ -450,7 +468,9 @@ else
   sleep 3
 
   msg_info "When ready:"
-  echo -e "  ${BL}bash ~/OpenClaw/openclaw-postinstall.sh${CL}   (recommended — handles model swap)"
-  echo -e "  ${BL}openclaw onboard${CL}                          (manual — swap model first)"
+  echo ""
+  echo -e "  ${DM}# Seed bootstrap and launch TUI:${CL}"
+  echo -e "  ${BL}cp ${BOOTSTRAP_TEMPLATE} ~/.openclaw/workspace/BOOTSTRAP.md${CL}"
+  echo -e "  ${BL}openclaw tui --message \"Wake up, my friend!\"${CL}"
   echo ""
 fi
