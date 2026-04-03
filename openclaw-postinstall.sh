@@ -55,6 +55,7 @@ PROVIDER_REGISTRY=(
   "Anthropic (Claude)|anthropic-api-key|--anthropic-api-key|anthropic/claude-sonnet-4-5, anthropic/claude-opus-4-5"
   "Google Gemini|gemini-api-key|--gemini-api-key|gemini/gemini-2.5-flash, gemini/gemini-2.5-pro"
   "OpenAI (GPT)|openai-api-key|--openai-api-key|openai/gpt-5, openai/gpt-5-mini"
+  "OpenAI Codex (ChatGPT OAuth)|openai-codex||openai-codex/gpt-5.4, openai-codex/gpt-5.3-codex"
   "OpenRouter|openrouter-api-key|--openrouter-api-key|openrouter/google/gemini-3-flash-preview"
   "OpenCode Zen|opencode-zen|--opencode-zen-api-key|opencode-zen/kimi-k2.5, opencode-zen/glm-5"
   "OpenCode Go|opencode-go|--opencode-go-api-key|opencode-go/kimi-k2.5, opencode-go/minimax-m2.5"
@@ -111,8 +112,9 @@ Usage: openclaw-postinstall.sh [OPTIONS]
 
 AI Providers (repeatable):
   --provider <choice>       Provider auth-choice (e.g. anthropic-api-key, ollama,
-                            opencode-go, opencode-zen, gemini-api-key)
+                            opencode-go, opencode-zen, gemini-api-key, openai-codex)
   --provider-key <key>      API key for the preceding --provider
+                            (not needed for openai-codex — uses OAuth browser flow)
   --ollama-url <url>        Ollama/OpenWebUI base URL (default: http://localhost:11434)
   --custom-base-url <url>   Custom provider base URL
 
@@ -286,6 +288,14 @@ step_ai_providers() {
       local choice="${CLI_PROVIDERS[$i]}"
       local key="${CLI_PROVIDER_KEYS[$i]:-}"
       local extra=""
+
+      # Codex OAuth requires interactive mode — can't do it via flags
+      if [[ "$choice" == "openai-codex" ]]; then
+        msg_warn "openai-codex uses OAuth and requires interactive mode. Skipping."
+        msg_info "Run interactively: bash ~/OpenClaw/openclaw-postinstall.sh"
+        continue
+      fi
+
       [[ "$choice" == "ollama" && -n "$OLLAMA_BASE_URL" ]] && extra="--custom-base-url $OLLAMA_BASE_URL"
       [[ "$choice" == "custom-api-key" && -n "$CUSTOM_BASE_URL" ]] && extra="--custom-base-url $CUSTOM_BASE_URL"
 
@@ -348,7 +358,39 @@ step_ai_providers() {
     local PROVIDER_KEY=""
     local EXTRA_FLAGS=""
 
-    if [[ "$AUTH_CHOICE" == "ollama" ]]; then
+    if [[ "$AUTH_CHOICE" == "openai-codex" ]]; then
+      # Codex OAuth: browser-based flow, no API key
+      echo ""
+      msg_info "Codex uses OAuth — you'll authorize via your ChatGPT account."
+      msg_info "This requires a ChatGPT Plus/Pro/Team subscription."
+      msg_warn "Note: Codex OAuth tokens may need re-auth every ~10-30 days (known issue)."
+      msg_warn "Embeddings are NOT included — set an OpenAI API key in Step 2 for memory."
+      echo ""
+
+      if $NON_INTERACTIVE; then
+        msg_warn "OAuth requires interactive mode. Skipping Codex registration."
+        msg_info "Run interactively later: bash ~/OpenClaw/openclaw-postinstall.sh"
+        echo ""
+        continue
+      fi
+
+      if prompt_yesno "Start OAuth flow now? (opens a URL to paste in your browser)"; then
+        msg_info "Running: openclaw onboard --auth-choice openai-codex"
+        echo ""
+        openclaw onboard --auth-choice openai-codex --skip-channels --skip-health --skip-skills --skip-ui 2>&1 || {
+          msg_warn "OAuth flow failed or was cancelled."
+          echo ""
+          continue
+        }
+        msg_ok "Codex OAuth registered"
+        REGISTERED+=("openai-codex:default")
+      else
+        msg_warn "Skipped. Run later: openclaw onboard --auth-choice openai-codex"
+      fi
+      echo ""
+      continue
+
+    elif [[ "$AUTH_CHOICE" == "ollama" ]]; then
       # Ollama: supports local installs or remote proxies (e.g. OpenWebUI)
       local OLLAMA_URL="http://localhost:11434"
       prompt_value OLLAMA_URL "Ollama base URL (or OpenWebUI/remote URL)" "http://localhost:11434"
@@ -760,33 +802,79 @@ step_tailscale() {
   if [[ "$TS_STATUS" == "Running" ]]; then
     local TS_IP
     TS_IP=$(tailscale ip -4 2>/dev/null || echo "unknown")
-    msg_ok "Tailscale connected (${TS_IP})"
+    msg_ok "Tailscale already connected (${TS_IP})"
   else
     msg_warn "Tailscale not connected (state: ${TS_STATUS})"
 
-    if [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
+    # --- Non-interactive: use auth key or skip ---
+    if $NON_INTERACTIVE; then
+      if [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
+        msg_info "Authenticating with provided auth key..."
+        sudo tailscale up --auth-key="$TAILSCALE_AUTH_KEY" 2>&1 || {
+          msg_error "Tailscale auth failed. Try: sudo tailscale up"
+          return 0
+        }
+        msg_ok "Tailscale authenticated"
+      else
+        msg_warn "Non-interactive: provide --tailscale-auth-key to authenticate"
+        return 0
+      fi
+
+    # --- CLI flag: auth key was passed ---
+    elif [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
       msg_info "Authenticating with provided auth key..."
       sudo tailscale up --auth-key="$TAILSCALE_AUTH_KEY" 2>&1 || {
         msg_error "Tailscale auth failed. Try: sudo tailscale up"
         return 0
       }
       msg_ok "Tailscale authenticated"
-    elif ! $NON_INTERACTIVE; then
-      if prompt_yesno "Start Tailscale authentication now?"; then
-        msg_info "Follow the URL to authenticate in your browser."
-        echo ""
-        sudo tailscale up 2>&1 || {
-          msg_error "Tailscale auth failed. Try later: sudo tailscale up"
-          return 0
-        }
-        msg_ok "Tailscale authenticated"
-      else
-        msg_warn "Skipped. Run later: sudo tailscale up"
-        return 0
-      fi
+
+    # --- Interactive: show options ---
     else
-      msg_warn "Non-interactive: provide --tailscale-auth-key to authenticate"
-      return 0
+      echo ""
+      msg_info "How would you like to connect Tailscale?"
+      echo ""
+      printf "   ${BL} 1${CL}) Browser login — generates a URL to open on any device\n"
+      printf "   ${BL} 2${CL}) Auth key — paste a pre-generated key from the Tailscale admin console\n"
+      printf "   ${BL} s${CL}) Skip — set up Tailscale later\n"
+      echo ""
+      printf "   ${BL}Pick${CL}: "
+      read -r TS_CHOICE
+
+      case "${TS_CHOICE,,}" in
+        1)
+          msg_info "Running: sudo tailscale up"
+          msg_info "Copy the URL below and open it in any browser to authenticate."
+          echo ""
+          sudo tailscale up 2>&1 || {
+            msg_error "Tailscale auth failed. Try later: sudo tailscale up"
+            return 0
+          }
+          msg_ok "Tailscale authenticated"
+          ;;
+        2)
+          echo ""
+          msg_info "Generate a key at: https://login.tailscale.com/admin/settings/keys"
+          msg_dim "Use a reusable or single-use auth key."
+          local TS_KEY_INPUT=""
+          prompt_value TS_KEY_INPUT "Tailscale auth key" "" "true"
+          if [[ -n "$TS_KEY_INPUT" ]]; then
+            msg_info "Authenticating..."
+            sudo tailscale up --auth-key="$TS_KEY_INPUT" 2>&1 || {
+              msg_error "Auth key rejected. Try: sudo tailscale up"
+              return 0
+            }
+            msg_ok "Tailscale authenticated"
+          else
+            msg_warn "No key provided. Skipping."
+            return 0
+          fi
+          ;;
+        s|skip|*)
+          msg_warn "Skipped. Run later: sudo tailscale up"
+          return 0
+          ;;
+      esac
     fi
   fi
 
