@@ -112,8 +112,10 @@ echo ""
 
 msg_info "This will:"
 if ! $KEEP_SOUL; then
-  echo -e "   ${RD}\xe2\x80\xa2${CL} Replace SOUL.md, AGENTS.md, USER.md with templates"
+  echo -e "   ${RD}\xe2\x80\xa2${CL} Remove SOUL.md and IDENTITY.md (regenerated during re-hatch)"
 fi
+echo -e "   ${RD}\xe2\x80\xa2${CL} Remove AGENTS.md, TOOLS.md, BOOTSTRAP.md (regenerated during re-hatch)"
+echo -e "   ${RD}\xe2\x80\xa2${CL} Reset USER.md to blank"
 echo -e "   ${RD}\xe2\x80\xa2${CL} Wipe all memory (LanceDB vector store + markdown logs)"
 echo -e "   ${RD}\xe2\x80\xa2${CL} Wipe all sessions (conversation history)"
 echo -e "   ${RD}\xe2\x80\xa2${CL} Wipe workspace skills (memory-lancedb-hybrid plugin data)"
@@ -207,27 +209,16 @@ msg_step "Step 4/5: Apply templates"
 WORKSPACE_DIR="${OC_DIR}/workspace"
 mkdir -p "$WORKSPACE_DIR"
 
-# SOUL.md
+# Remove workspace identity files so hatching can regenerate them
 if ! $KEEP_SOUL; then
-  SOUL_CONTENT=$(resolve_template "soul.md.tpl" 2>/dev/null) || true
-  if [[ -n "$SOUL_CONTENT" ]]; then
-    echo "$SOUL_CONTENT" > "${WORKSPACE_DIR}/SOUL.md"
-    msg_ok "SOUL.md reset to template"
-  else
-    msg_warn "Could not resolve soul.md.tpl — SOUL.md left unchanged"
-  fi
+  rm -f "${WORKSPACE_DIR}/SOUL.md" "${WORKSPACE_DIR}/IDENTITY.md"
+  msg_ok "SOUL.md and IDENTITY.md removed (will be regenerated during hatch)"
 fi
 
-# AGENTS.md
-AGENTS_CONTENT=$(resolve_template "agents.md.tpl" 2>/dev/null) || true
-if [[ -n "$AGENTS_CONTENT" ]]; then
-  echo "$AGENTS_CONTENT" > "${WORKSPACE_DIR}/AGENTS.md"
-  msg_ok "AGENTS.md reset to template"
-else
-  msg_warn "Could not resolve agents.md.tpl — AGENTS.md left unchanged"
-fi
+rm -f "${WORKSPACE_DIR}/AGENTS.md" "${WORKSPACE_DIR}/TOOLS.md" "${WORKSPACE_DIR}/BOOTSTRAP.md"
+msg_ok "AGENTS.md, TOOLS.md, BOOTSTRAP.md removed (will be regenerated during hatch)"
 
-# USER.md — create empty if it doesn't exist, or wipe to empty
+# USER.md — reset to blank scaffold
 echo "# User Context" > "${WORKSPACE_DIR}/USER.md"
 echo "" >> "${WORKSPACE_DIR}/USER.md"
 echo "Add personal context here. The agent reads this at session start." >> "${WORKSPACE_DIR}/USER.md"
@@ -277,7 +268,7 @@ msg_ok "Doctor completed"
 if [[ -d "${OC_DIR}/.git" ]]; then
   cd "$OC_DIR"
   git add -A 2>/dev/null || true
-  git commit -q -m "reset: wiped memory/sessions, re-applied templates $(date +%Y-%m-%d)" 2>/dev/null || true
+  git commit -q -m "reset: wiped memory/sessions/personality $(date +%Y-%m-%d)" 2>/dev/null || true
   msg_ok "Reset committed to git"
 fi
 
@@ -299,58 +290,40 @@ echo -e "${GN}============================================${CL}"
 echo ""
 msg_ok "Backup: ${BACKUP_FILE}"
 msg_ok "Memory and sessions wiped"
-msg_ok "Templates re-applied"
+msg_ok "Workspace identity files removed (ready for re-hatch)"
 echo ""
 
 if $SKIP_HATCH; then
   msg_info "Skipped hatching. When ready, run:"
   echo ""
-  echo -e "  ${BL}openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory${CL}"
-  echo -e "  ${BL}openclaw gateway restart${CL}"
-  echo -e "  ${DM}(wait 3 seconds)${CL}"
-  echo -e "  ${BL}openclaw gateway restart${CL}"
-  echo -e "  ${BL}openclaw tui${CL}"
+  echo -e "  ${BL}openclaw onboard${CL}"
+  echo ""
+  msg_dim "Onboard will re-initialize hooks and walk through the hatching process."
+  msg_dim "Skip through already-configured steps, select all hooks, choose 'Hatch in TUI'."
   echo ""
   exit 0
 fi
 
-msg_warn "Do NOT message the bot on Telegram until the TUI session is connected."
+msg_info "OpenClaw onboard will now launch to re-hatch the bot."
+msg_dim "Skip through provider/model steps (already configured)."
+msg_dim "Select ALL hooks when prompted. Choose 'Hatch in TUI'."
+msg_dim "The bot will say 'Wake up, my friend...' and ask you questions"
+msg_dim "to build its personality (SOUL.md) from scratch."
+msg_dim ""
+msg_warn "Do NOT message the bot on Telegram until hatching is complete."
 echo ""
 
-printf "   ${BL}Press Enter to initialize hooks and launch TUI (or 's' to skip)${CL}: "
+printf "   ${BL}Press Enter to launch onboard (or 's' to skip)${CL}: "
 read -r HATCH_REPLY
 
 if [[ "${HATCH_REPLY,,}" != "s" ]]; then
   echo ""
-
-  # Enable hooks via CLI (config JSON alone is not sufficient)
-  msg_info "Enabling internal hooks..."
-  openclaw hooks enable boot-md 2>/dev/null || msg_warn "Could not enable boot-md"
-  openclaw hooks enable bootstrap-extra-files 2>/dev/null || msg_warn "Could not enable bootstrap-extra-files"
-  openclaw hooks enable command-logger 2>/dev/null || msg_warn "Could not enable command-logger"
-  openclaw hooks enable session-memory 2>/dev/null || msg_warn "Could not enable session-memory"
-  msg_ok "Hooks enabled"
-
-  # Double restart: first registers hooks, second triggers boot-md
-  # (works around known race condition where boot-md misses gateway:startup)
-  msg_info "Restarting gateway (pass 1 — register hooks)..."
-  openclaw gateway restart >/dev/null 2>&1 || true
-  sleep 3
-
-  msg_info "Restarting gateway (pass 2 — trigger boot-md)..."
-  openclaw gateway restart >/dev/null 2>&1 || true
-  sleep 3
-
-  msg_ok "Launching TUI — say hello and verify the bot responds with its personality."
+  msg_ok "Launching openclaw onboard..."
   echo ""
-  exec openclaw tui
+  exec openclaw onboard
 else
   echo ""
   msg_info "When ready:"
-  echo ""
-  echo -e "  ${BL}openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory${CL}"
-  echo -e "  ${BL}openclaw gateway restart${CL}    ${DM}(wait 3s)${CL}"
-  echo -e "  ${BL}openclaw gateway restart${CL}    ${DM}(double restart for boot-md race condition)${CL}"
-  echo -e "  ${BL}openclaw tui${CL}"
+  echo -e "  ${BL}openclaw onboard${CL}"
   echo ""
 fi

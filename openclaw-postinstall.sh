@@ -1132,26 +1132,9 @@ step_tailscale() {
 step_finalize() {
   msg_step "Step 6/6: Finalize"
 
-  # Offer SOUL.md edit
-  if ! $SKIP_SOUL; then
-    local SOUL_FILE="${OC_DIR}/workspace/SOUL.md"
-    if [[ -f "$SOUL_FILE" ]]; then
-      if grep -q "Your name and personality should be configured" "$SOUL_FILE" 2>/dev/null || \
-         grep -q "your-agent-name" "$SOUL_FILE" 2>/dev/null; then
-        msg_warn "SOUL.md still has default content"
-        if ! $NON_INTERACTIVE; then
-          if prompt_yesno "Open SOUL.md in an editor now?" "n"; then
-            ${EDITOR:-nano} "$SOUL_FILE"
-            msg_ok "SOUL.md edited"
-          else
-            msg_info "Edit later: nano ~/.openclaw/workspace/SOUL.md"
-          fi
-        fi
-      else
-        msg_ok "SOUL.md customized"
-      fi
-    fi
-  fi
+  # NOTE: SOUL.md is NOT edited here. The hatching process (openclaw onboard)
+  # generates SOUL.md interactively. Editing it before hatch would bypass the
+  # personality creation experience.
 
   # Fix streamMode → streaming (doctor renames it but config can revert)
   if jq -e '.channels.telegram.streamMode' "$OC_CONFIG" >/dev/null 2>&1; then
@@ -1345,7 +1328,7 @@ print_summary() {
 }
 
 # =============================================================================
-# Initialize hooks and launch TUI to hatch the bot
+# Launch openclaw onboard to hatch the bot
 # =============================================================================
 step_launch() {
   if $NON_INTERACTIVE; then
@@ -1355,26 +1338,30 @@ step_launch() {
   echo ""
   msg_info "Setup complete. Ready to hatch the bot."
   msg_dim ""
-  msg_warn "IMPORTANT: Do NOT message the bot on Telegram until the TUI session"
-  msg_warn "has started and you see the 'connected' status bar. Messaging early"
-  msg_warn "creates a blank session that skips the personality injection."
+  msg_dim "OpenClaw onboard will now launch to finalize hooks and hatch your bot."
+  msg_dim "It is safe to re-run — onboard skips steps that are already configured."
+  msg_dim ""
+  msg_dim "During onboard:"
+  msg_dim "  - Skip through provider/model steps (already configured by this wizard)"
+  msg_dim "  - Select ALL hooks when prompted (boot-md, bootstrap-extra-files, etc.)"
+  msg_dim "  - Choose 'Hatch in TUI' when asked how to hatch"
+  msg_dim "  - The bot will say 'Wake up, my friend...' and ask you questions"
+  msg_dim "  - Answer them to build the bot's personality (SOUL.md)"
+  msg_dim ""
+  msg_warn "IMPORTANT: Do NOT message the bot on Telegram until hatching is complete."
   echo ""
 
-  if prompt_yesno "Initialize hooks and launch TUI now?"; then
+  if prompt_yesno "Launch onboard now to hatch the bot?"; then
     echo ""
-    _enable_hooks_and_launch
+    msg_ok "Launching openclaw onboard..."
+    echo ""
+    # exec replaces this process so onboard gets full terminal control
+    exec openclaw onboard
   else
     echo ""
-    msg_info "When ready, run these commands:"
+    msg_info "When ready:"
     echo ""
-    echo -e "  ${BL}openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory${CL}"
-    echo -e "  ${BL}openclaw gateway restart${CL}"
-    echo -e "  ${DM}(wait 3 seconds)${CL}"
-    echo -e "  ${BL}openclaw gateway restart${CL}"
-    echo -e "  ${BL}openclaw tui${CL}"
-    echo ""
-    echo -e "  ${DM}The double restart works around a known race condition where${CL}"
-    echo -e "  ${DM}boot-md registers after the startup event fires on first start.${CL}"
+    echo -e "  ${BL}openclaw onboard${CL}"
     echo ""
     echo -e "  ${DM}Other useful commands:${CL}"
     echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
@@ -1382,46 +1369,6 @@ step_launch() {
     echo -e "  ${BL}openclaw logs --follow${CL}      Live logs"
     echo ""
   fi
-}
-
-# -- Enable hooks and launch TUI with double-restart ---------------------------
-# Hooks must be explicitly enabled via CLI, not just config JSON.
-# The double gateway restart works around a known race condition where boot-md
-# registers for gateway:startup AFTER the event fires on first start.
-_enable_hooks_and_launch() {
-  msg_info "Enabling internal hooks..."
-  openclaw hooks enable boot-md 2>/dev/null || msg_warn "Could not enable boot-md"
-  openclaw hooks enable bootstrap-extra-files 2>/dev/null || msg_warn "Could not enable bootstrap-extra-files"
-  openclaw hooks enable command-logger 2>/dev/null || msg_warn "Could not enable command-logger"
-  openclaw hooks enable session-memory 2>/dev/null || msg_warn "Could not enable session-memory"
-  msg_ok "Hooks enabled"
-
-  # First restart: gateway picks up config + hooks register with runtime
-  msg_info "Restarting gateway (pass 1 — register hooks)..."
-  openclaw gateway restart >/dev/null 2>&1 || true
-  sleep 3
-
-  # Second restart: boot-md is now registered and will catch gateway:startup
-  msg_info "Restarting gateway (pass 2 — trigger boot-md)..."
-  openclaw gateway restart >/dev/null 2>&1 || true
-  sleep 3
-
-  # Verify gateway is running
-  local GW_CHECK
-  GW_CHECK=$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo "unknown")
-  if [[ "$GW_CHECK" == "active" ]]; then
-    msg_ok "Gateway running with hooks initialized"
-  else
-    msg_warn "Gateway status: ${GW_CHECK} — TUI may still work"
-  fi
-
-  echo ""
-  msg_ok "Launching TUI — this is where the bot reads SOUL.md and hatches."
-  msg_dim "Say hello and verify the bot responds with its personality."
-  echo ""
-
-  # exec replaces this process so the TUI gets full terminal control
-  exec openclaw tui
 }
 
 # =============================================================================
