@@ -1387,19 +1387,67 @@ seed_bootstrap() {
 }
 
 # =============================================================================
-# Temporarily swap primary model for hatching
+# Hatch model selection + swap
 # =============================================================================
-# Kimi K2.5 can't handle OpenClaw's tool-calling initialization flow
-# (GitHub Issue #55942). We swap to a model that can follow the BOOTSTRAP.md
-# hatching instructions, then restore the original model after hatching.
-#
-# Default hatch model: GLM-5 (available on OpenCode Go, good instruction following).
-# Override with HATCH_MODEL env var if needed (e.g. HATCH_MODEL=openai/gpt-4o).
+# The hatching process needs a model with strong instruction-following to
+# properly execute the BOOTSTRAP.md personality-building dialogue. Some models
+# (e.g. Kimi K2.5) can't handle the tool-calling init flow, and lightweight
+# models (e.g. gpt-4o-mini) ignore the bootstrap instructions entirely.
 #
 # SAVED_PRIMARY is intentionally global — set by swap_model_for_hatch(),
 # consumed by restore_model_after_hatch().
 SAVED_PRIMARY=""
-HATCH_MODEL="${HATCH_MODEL:-opencode-go/glm-5}"
+HATCH_MODEL=""
+
+# Interactive menu to choose the hatching model
+pick_hatch_model() {
+  local CURRENT_PRIMARY
+  CURRENT_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // "not set"' "$OC_CONFIG" 2>/dev/null)
+
+  echo ""
+  echo -e "   ${GN}========================================${CL}"
+  echo -e "   ${GN}  Hatch Model Selection${CL}"
+  echo -e "   ${GN}========================================${CL}"
+  echo ""
+  msg_dim "Hatching requires a model that can follow complex multi-step instructions."
+  msg_dim "Your current primary model (${CURRENT_PRIMARY}) will be restored after hatching."
+  echo ""
+  msg_info "Choose a model for the hatching process:"
+  echo ""
+  echo -e "  ${GN}1)${CL} opencode-go/glm-5          ${DM}— Recommended. Strong instruction following, included with OpenCode Go.${CL}"
+  echo -e "  ${GN}2)${CL} anthropic/claude-sonnet     ${DM}— Best quality hatch. Requires Anthropic API key.${CL}"
+  echo -e "  ${GN}3)${CL} openai/gpt-4o              ${DM}— Good alternative. Requires OpenAI API key (you may already have one for embeddings).${CL}"
+  echo -e "  ${GN}4)${CL} opencode-go/kimi-k2.5      ${DM}— Your default. May struggle with tool-calling init (known issue #55942).${CL}"
+  echo -e "  ${GN}5)${CL} ${CURRENT_PRIMARY}  ${DM}— Keep current model as-is (no swap).${CL}"
+  echo -e "  ${GN}6)${CL} Custom                     ${DM}— Enter any model string manually.${CL}"
+  echo ""
+  printf "   ${BL}Select [1-6, default=1]:${CL} "
+  read -r HATCH_CHOICE
+
+  case "${HATCH_CHOICE:-1}" in
+    1) HATCH_MODEL="opencode-go/glm-5" ;;
+    2) HATCH_MODEL="anthropic/claude-sonnet" ;;
+    3) HATCH_MODEL="openai/gpt-4o" ;;
+    4) HATCH_MODEL="opencode-go/kimi-k2.5" ;;
+    5) HATCH_MODEL="$CURRENT_PRIMARY" ;;
+    6)
+      printf "   ${BL}Enter model string:${CL} "
+      read -r CUSTOM_MODEL
+      if [[ -z "$CUSTOM_MODEL" ]]; then
+        msg_warn "No model entered — defaulting to opencode-go/glm-5"
+        HATCH_MODEL="opencode-go/glm-5"
+      else
+        HATCH_MODEL="$CUSTOM_MODEL"
+      fi
+      ;;
+    *)
+      msg_warn "Invalid choice — defaulting to opencode-go/glm-5"
+      HATCH_MODEL="opencode-go/glm-5"
+      ;;
+  esac
+
+  msg_ok "Hatch model: ${HATCH_MODEL}"
+}
 
 swap_model_for_hatch() {
   # Save current primary model (global — used by restore_model_after_hatch)
@@ -1458,13 +1506,12 @@ step_launch() {
   echo -e "   ${GN}  Hatching${CL}"
   echo -e "   ${GN}========================================${CL}"
   echo ""
-  msg_dim "The hatching process seeds BOOTSTRAP.md into the workspace, swaps to a"
-  msg_dim "tool-calling model (OpenAI), and launches the TUI with the first message."
+  msg_dim "The hatching process seeds BOOTSTRAP.md into the workspace and launches"
+  msg_dim "the TUI with the first message: 'Wake up, my friend...'"
   msg_dim ""
-  msg_dim "The bot will say 'Wake up, my friend...' and walk you through building"
-  msg_dim "its personality: name, vibe, SOUL.md, IDENTITY.md, and USER.md."
+  msg_dim "The bot will walk you through building its personality: name, vibe,"
+  msg_dim "SOUL.md, IDENTITY.md, and USER.md. When done, it deletes BOOTSTRAP.md."
   msg_dim ""
-  msg_dim "When hatching is done, the bot deletes BOOTSTRAP.md on its own."
   msg_dim "After you exit the TUI, the script restores your production model"
   msg_dim "and installs the memory plugin."
   msg_dim ""
@@ -1472,35 +1519,39 @@ step_launch() {
   echo ""
 
   if prompt_yesno "Hatch the bot now?"; then
-    echo ""
 
-    # 1. Seed BOOTSTRAP.md
+    # 1. Pick hatch model (interactive menu)
+    pick_hatch_model
+
+    # 2. Seed BOOTSTRAP.md
+    echo ""
     seed_bootstrap || {
       msg_error "Cannot hatch without BOOTSTRAP.md. Fix the template path and re-run."
       return 1
     }
 
-    # 2. Swap to OpenAI model for hatching
+    # 3. Swap model
     swap_model_for_hatch
 
-    # 3. Launch TUI with the hatching message
+    # 4. Launch TUI with the hatching message
+    echo ""
     msg_ok "Launching TUI — hatching begins..."
     echo ""
     openclaw tui --message "Wake up, my friend!"
     local TUI_EXIT=$?
     echo ""
 
-    # 4. Post-hatch: restore original model
+    # 5. Post-hatch: restore original model
     restore_model_after_hatch
 
-    # 5. Post-hatch: install memory plugin
+    # 6. Post-hatch: install memory plugin
     if [[ ! -d "${HOME}/.openclaw/workspace/skills/memory-lancedb-hybrid" ]]; then
       install_memory_plugin
     else
       msg_dim "Memory plugin already installed"
     fi
 
-    # 6. Git commit post-hatch state
+    # 7. Git commit post-hatch state
     if [[ -d "${OC_DIR}/.git" ]]; then
       cd "$OC_DIR"
       git add -A 2>/dev/null || true
@@ -1520,15 +1571,15 @@ step_launch() {
     echo -e "  ${DM}# 1. Seed the bootstrap file:${CL}"
     echo -e "  ${BL}cp ${BOOTSTRAP_TEMPLATE} ~/.openclaw/workspace/BOOTSTRAP.md${CL}"
     echo ""
-    echo -e "  ${DM}# 2. (If not using OpenAI) Temporarily swap model:${CL}"
+    echo -e "  ${DM}# 2. Temporarily swap model (pick one with good instruction following):${CL}"
     echo -e "  ${BL}openclaw config set agents.defaults.model.primary opencode-go/glm-5${CL}"
     echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
     echo ""
     echo -e "  ${DM}# 3. Launch TUI:${CL}"
     echo -e "  ${BL}openclaw tui --message \"Wake up, my friend!\"${CL}"
     echo ""
-    echo -e "  ${DM}# 4. After hatching, restore your model:${CL}"
-    echo -e "  ${BL}openclaw config set agents.defaults.model.primary opencode-go/kimi-k2.5${CL}"
+    echo -e "  ${DM}# 4. After hatching, restore your production model:${CL}"
+    echo -e "  ${BL}openclaw config set agents.defaults.model.primary <your-model>${CL}"
     echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
     echo ""
   fi

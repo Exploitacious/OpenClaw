@@ -291,11 +291,9 @@ msg_ok "Workspace identity files removed"
 echo ""
 
 # -- Hatching helpers ----------------------------------------------------------
-# Default hatch model: GLM-5 (good instruction following, available on OpenCode Go).
-# Override: HATCH_MODEL=openai/gpt-4o bash ~/OpenClaw/openclaw-reset.sh
 BOOTSTRAP_TEMPLATE="${HOME}/.npm-global/lib/node_modules/openclaw/docs/reference/templates/BOOTSTRAP.md"
 SAVED_PRIMARY=""
-HATCH_MODEL="${HATCH_MODEL:-opencode-go/glm-5}"
+HATCH_MODEL=""
 
 seed_bootstrap() {
   local DEST="${OC_DIR}/workspace/BOOTSTRAP.md"
@@ -312,6 +310,55 @@ seed_bootstrap() {
   msg_ok "BOOTSTRAP.md seeded from OpenClaw template"
 }
 
+pick_hatch_model() {
+  local CURRENT_PRIMARY
+  CURRENT_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // "not set"' "$OC_CONFIG" 2>/dev/null)
+
+  echo ""
+  echo -e "   ${GN}========================================${CL}"
+  echo -e "   ${GN}  Hatch Model Selection${CL}"
+  echo -e "   ${GN}========================================${CL}"
+  echo ""
+  msg_dim "Hatching requires a model that can follow complex multi-step instructions."
+  msg_dim "Your current primary model (${CURRENT_PRIMARY}) will be restored after hatching."
+  echo ""
+  msg_info "Choose a model for the hatching process:"
+  echo ""
+  echo -e "  ${GN}1)${CL} opencode-go/glm-5          ${DM}— Recommended. Strong instruction following, included with OpenCode Go.${CL}"
+  echo -e "  ${GN}2)${CL} anthropic/claude-sonnet     ${DM}— Best quality hatch. Requires Anthropic API key.${CL}"
+  echo -e "  ${GN}3)${CL} openai/gpt-4o              ${DM}— Good alternative. Requires OpenAI API key (you may already have one for embeddings).${CL}"
+  echo -e "  ${GN}4)${CL} opencode-go/kimi-k2.5      ${DM}— Your default. May struggle with tool-calling init (known issue #55942).${CL}"
+  echo -e "  ${GN}5)${CL} ${CURRENT_PRIMARY}  ${DM}— Keep current model as-is (no swap).${CL}"
+  echo -e "  ${GN}6)${CL} Custom                     ${DM}— Enter any model string manually.${CL}"
+  echo ""
+  printf "   ${BL}Select [1-6, default=1]:${CL} "
+  read -r HATCH_CHOICE
+
+  case "${HATCH_CHOICE:-1}" in
+    1) HATCH_MODEL="opencode-go/glm-5" ;;
+    2) HATCH_MODEL="anthropic/claude-sonnet" ;;
+    3) HATCH_MODEL="openai/gpt-4o" ;;
+    4) HATCH_MODEL="opencode-go/kimi-k2.5" ;;
+    5) HATCH_MODEL="$CURRENT_PRIMARY" ;;
+    6)
+      printf "   ${BL}Enter model string:${CL} "
+      read -r CUSTOM_MODEL
+      if [[ -z "$CUSTOM_MODEL" ]]; then
+        msg_warn "No model entered — defaulting to opencode-go/glm-5"
+        HATCH_MODEL="opencode-go/glm-5"
+      else
+        HATCH_MODEL="$CUSTOM_MODEL"
+      fi
+      ;;
+    *)
+      msg_warn "Invalid choice — defaulting to opencode-go/glm-5"
+      HATCH_MODEL="opencode-go/glm-5"
+      ;;
+  esac
+
+  msg_ok "Hatch model: ${HATCH_MODEL}"
+}
+
 swap_model_for_hatch() {
   SAVED_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // ""' "$OC_CONFIG" 2>/dev/null)
 
@@ -319,8 +366,8 @@ swap_model_for_hatch() {
     return 0
   fi
 
-  # No swap needed if already using the hatch model
   if [[ "$SAVED_PRIMARY" == "$HATCH_MODEL" ]]; then
+    msg_dim "Primary model is already ${HATCH_MODEL} — no swap needed"
     SAVED_PRIMARY=""
     return 0
   fi
@@ -415,9 +462,12 @@ printf "   ${BL}Press Enter to hatch (or 's' to skip)${CL}: "
 read -r HATCH_REPLY
 
 if [[ "${HATCH_REPLY,,}" != "s" ]]; then
-  echo ""
 
-  # 1. Seed BOOTSTRAP.md
+  # 1. Pick hatch model (interactive menu)
+  pick_hatch_model
+
+  # 2. Seed BOOTSTRAP.md
+  echo ""
   seed_bootstrap || {
     msg_error "Cannot hatch without BOOTSTRAP.md. Fix the template path and re-run."
     # Restore memory plugin before exiting
@@ -428,22 +478,23 @@ if [[ "${HATCH_REPLY,,}" != "s" ]]; then
     exit 1
   }
 
-  # 2. Swap to OpenAI model for hatching
+  # 3. Swap model
   swap_model_for_hatch
 
-  # 3. Start gateway with hatch model
+  # 4. Start gateway with hatch model
   msg_info "Starting gateway..."
   systemctl --user start openclaw-gateway.service 2>/dev/null || true
   sleep 3
 
-  # 4. Launch TUI with the hatching message
+  # 5. Launch TUI with the hatching message
+  echo ""
   msg_ok "Launching TUI — hatching begins..."
   echo ""
   openclaw tui --message "Wake up, my friend!"
   TUI_EXIT=$?
   echo ""
 
-  # 5. Post-hatch restoration
+  # 6. Post-hatch restoration
   post_hatch_restore
 
   if [[ $TUI_EXIT -eq 0 ]]; then

@@ -69,9 +69,9 @@ The wizard walks through six steps interactively:
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | Hook enablement, gateway restart, `openclaw doctor --fix`, git commit |
-| Hatch | Seeds BOOTSTRAP.md, swaps to GLM-5, launches TUI with "Wake up, my friend!", then restores production model and installs memory plugin |
+| Hatch | Lets you choose a hatch model, seeds BOOTSTRAP.md, launches TUI with "Wake up, my friend!", then restores production model and installs memory plugin |
 
-All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard handles the hatching process directly — no `openclaw onboard` involved. It copies BOOTSTRAP.md from the shipped OpenClaw template into the workspace, temporarily swaps the primary model to `opencode-go/glm-5` (Kimi K2.5 can't handle the tool-calling initialization flow, and gpt-4o-mini is too weak to follow hatching instructions), and launches `openclaw tui --message "Wake up, my friend!"`. The bot follows the BOOTSTRAP.md instructions to interactively build its personality: SOUL.md, IDENTITY.md, and USER.md. When done, the bot deletes BOOTSTRAP.md on its own. After you exit the TUI, the script restores your production model and installs the memory plugin. Override the hatch model with `HATCH_MODEL=openai/gpt-4o bash ~/OpenClaw/openclaw-postinstall.sh`.
+All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard handles the hatching process directly — no `openclaw onboard` involved. It presents a model selection menu for the hatch (GLM-5 recommended, Claude Sonnet for best quality, GPT-4o as fallback, or keep your current model), copies BOOTSTRAP.md from the shipped OpenClaw template into the workspace, and launches `openclaw tui --message "Wake up, my friend!"`. The bot follows the BOOTSTRAP.md instructions to interactively build its personality: SOUL.md, IDENTITY.md, and USER.md. When done, the bot deletes BOOTSTRAP.md on its own. After you exit the TUI, the script restores your production model and installs the memory plugin.
 
 > **Note:** The memory plugin and all workspace content are intentionally NOT created before hatching. Any content in the workspace directory can trigger OpenClaw's `hasUserContent` check, which skips BOOTSTRAP.md auto-seeding and blocks the hatching dialogue. Our scripts bypass this entirely by seeding BOOTSTRAP.md manually and launching TUI directly.
 
@@ -201,7 +201,7 @@ To wipe the agent's memory and personality without reinstalling OpenClaw:
 bash ~/OpenClaw/openclaw-reset.sh
 ```
 
-This wipes memory (vector store + markdown logs), sessions (conversation history), and workspace identity files (SOUL.md, AGENTS.md, IDENTITY.md, etc.). The memory plugin is temporarily stashed outside the workspace so the hatching process sees a clean state. The script then seeds BOOTSTRAP.md from the OpenClaw template, temporarily swaps the primary model to `opencode-go/glm-5` (default — override with `HATCH_MODEL` env var), and launches `openclaw tui --message "Wake up, my friend!"` to re-hatch directly — no `openclaw onboard` involved. After you exit the TUI, it restores the original model and memory plugin. All API keys, provider credentials, gateway tokens, and config settings are preserved throughout.
+This wipes memory (vector store + markdown logs), sessions (conversation history), and workspace identity files (SOUL.md, AGENTS.md, IDENTITY.md, etc.). The memory plugin is temporarily stashed outside the workspace so the hatching process sees a clean state. The script then presents a model selection menu (GLM-5, Claude Sonnet, GPT-4o, Kimi K2.5, current, or custom), seeds BOOTSTRAP.md from the OpenClaw template, and launches `openclaw tui --message "Wake up, my friend!"` to re-hatch directly — no `openclaw onboard` involved. After you exit the TUI, it restores the original model and memory plugin. All API keys, provider credentials, gateway tokens, and config settings are preserved throughout.
 
 Options:
 
