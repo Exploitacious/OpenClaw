@@ -291,8 +291,11 @@ msg_ok "Workspace identity files removed"
 echo ""
 
 # -- Hatching helpers ----------------------------------------------------------
+# Default hatch model: GLM-5 (good instruction following, available on OpenCode Go).
+# Override: HATCH_MODEL=openai/gpt-4o bash ~/OpenClaw/openclaw-reset.sh
 BOOTSTRAP_TEMPLATE="${HOME}/.npm-global/lib/node_modules/openclaw/docs/reference/templates/BOOTSTRAP.md"
 SAVED_PRIMARY=""
+HATCH_MODEL="${HATCH_MODEL:-opencode-go/glm-5}"
 
 seed_bootstrap() {
   local DEST="${OC_DIR}/workspace/BOOTSTRAP.md"
@@ -316,12 +319,12 @@ swap_model_for_hatch() {
     return 0
   fi
 
-  if [[ "$SAVED_PRIMARY" == openai/* ]]; then
+  # No swap needed if already using the hatch model
+  if [[ "$SAVED_PRIMARY" == "$HATCH_MODEL" ]]; then
     SAVED_PRIMARY=""
     return 0
   fi
 
-  local HATCH_MODEL="openai/gpt-4o-mini"
   msg_info "Temporarily setting primary model to ${HATCH_MODEL} for hatching..."
   msg_dim "(Original: ${SAVED_PRIMARY} — will be restored after hatch)"
 

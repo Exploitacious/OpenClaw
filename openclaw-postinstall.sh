@@ -1387,20 +1387,21 @@ seed_bootstrap() {
 }
 
 # =============================================================================
-# Temporarily swap primary model to OpenAI for hatching
+# Temporarily swap primary model for hatching
 # =============================================================================
-# Kimi K2.5 (and other OpenCode Go models) can't handle OpenClaw's tool-calling
-# initialization flow (GitHub Issue #55942). We temporarily swap to a cheap
-# OpenAI model (the key is already present for embeddings), then restore the
-# original model after hatching completes.
+# Kimi K2.5 can't handle OpenClaw's tool-calling initialization flow
+# (GitHub Issue #55942). We swap to a model that can follow the BOOTSTRAP.md
+# hatching instructions, then restore the original model after hatching.
+#
+# Default hatch model: GLM-5 (available on OpenCode Go, good instruction following).
+# Override with HATCH_MODEL env var if needed (e.g. HATCH_MODEL=openai/gpt-4o).
 #
 # SAVED_PRIMARY is intentionally global — set by swap_model_for_hatch(),
 # consumed by restore_model_after_hatch().
 SAVED_PRIMARY=""
+HATCH_MODEL="${HATCH_MODEL:-opencode-go/glm-5}"
 
 swap_model_for_hatch() {
-  local HATCH_MODEL="openai/gpt-4o-mini"
-
   # Save current primary model (global — used by restore_model_after_hatch)
   SAVED_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // ""' "$OC_CONFIG" 2>/dev/null)
 
@@ -1409,10 +1410,10 @@ swap_model_for_hatch() {
     return 0
   fi
 
-  # Check if already an OpenAI model (no swap needed)
-  if [[ "$SAVED_PRIMARY" == openai/* ]]; then
-    msg_dim "Primary model is already OpenAI — no swap needed for hatching"
-    SAVED_PRIMARY=""  # Clear so restore_model_after_hatch is a no-op
+  # No swap needed if already using the hatch model
+  if [[ "$SAVED_PRIMARY" == "$HATCH_MODEL" ]]; then
+    msg_dim "Primary model is already ${HATCH_MODEL} — no swap needed"
+    SAVED_PRIMARY=""
     return 0
   fi
 
@@ -1520,7 +1521,7 @@ step_launch() {
     echo -e "  ${BL}cp ${BOOTSTRAP_TEMPLATE} ~/.openclaw/workspace/BOOTSTRAP.md${CL}"
     echo ""
     echo -e "  ${DM}# 2. (If not using OpenAI) Temporarily swap model:${CL}"
-    echo -e "  ${BL}openclaw config set agents.defaults.model.primary openai/gpt-4o-mini${CL}"
+    echo -e "  ${BL}openclaw config set agents.defaults.model.primary opencode-go/glm-5${CL}"
     echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
     echo ""
     echo -e "  ${DM}# 3. Launch TUI:${CL}"
