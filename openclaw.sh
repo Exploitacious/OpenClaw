@@ -489,7 +489,7 @@ print_summary() {
   echo -e "    4. Wizard:   ${GN}bash ~/OpenClaw/openclaw-postinstall.sh${CL}"
   echo ""
   echo "  The wizard handles AI providers, model config, API keys,"
-  echo "  Telegram bot, Tailscale auth, and launches openclaw onboard."
+  echo "  Telegram bot, Tailscale auth, and launches the TUI to hatch."
   echo ""
   echo "============================================================================="
 }

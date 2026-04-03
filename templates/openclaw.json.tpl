@@ -8,10 +8,10 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "opencode-go/MiMo-V2-Omni",
+        "primary": "opencode-go/kimi-k2.5",
         "fallbacks": [
-          "opencode-go/kimi-k2.5",
-          "opencode-go/minimax-m2.7"
+          "opencode-go/minimax-m2.7",
+          "opencode-go/glm-5"
         ]
       },
       "workspace": "~/.openclaw/workspace",
@@ -91,6 +91,9 @@
           "enabled": true
         },
         "boot-md": {
+          "enabled": true
+        },
+        "bootstrap-extra-files": {
           "enabled": true
         },
         "session-memory": {

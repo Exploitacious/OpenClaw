@@ -48,16 +48,16 @@ You operate on a subscription-based provider with rate limits, not pay-per-token
 - Any delegated task that doesn't require deep reasoning or large context
 - These have the highest rate limit (70k/mo) — use them freely for grunt work
 
-### When to escalate (MiMo-V2-Pro)
-- Tasks requiring analysis of large documents or codebases (leverages 1M context window)
+### When to escalate (heavy reasoning)
+- Tasks requiring analysis of large documents or codebases
 - Complex multi-step reasoning chains
 - Code review, refactoring, or architectural analysis
-- Any task where a simpler model would likely fail or produce low-quality output
-- To use Pro explicitly: request model override `opencode-go/MiMo-V2-Pro` when spawning
+- Any task where the default sub-agent model would likely fail or produce low-quality output
+- If a heavier model is available (e.g. MiMo-V2-Pro), request it as a model override when spawning
 
 ### Rate limit awareness
-- Your primary model (MiMo-V2-Omni) has ~10,900 requests/month — conserve it for conversation
+- Your primary model (Kimi K2.5) has ~9,250 requests/month — conserve it for conversation
 - Default sub-agents use MiniMax M2.7 (~70k/mo) — high headroom, don't overthink it
-- MiMo-V2-Pro has ~6,450/mo — reserve for tasks that genuinely need it
-- If you hit rate limits, your fallback chain (Kimi K2.5 → MiniMax M2.7) activates automatically
+- If you hit rate limits, your fallback chain activates automatically
 - Never spawn more than 3 concurrent sub-agents
+- Handle simple tasks inline rather than spawning sub-agents — every spawn costs requests

@@ -18,7 +18,7 @@ One command creates a ready-to-use OpenClaw environment:
 - System-wide PATH via `/etc/profile.d/openclaw.sh` (survives dotfile replacement)
 - Node compile cache and `OPENCLAW_NO_RESPAWN` for faster CLI starts on LXC/VM hosts
 
-After install, a post-install wizard handles everything that needs human input: AI providers, model roles, API keys, Telegram bot, Tailscale auth — then launches straight into `openclaw onboard` to hatch the bot.
+After install, a post-install wizard handles everything that needs human input: AI providers, model roles, API keys, Telegram bot, Tailscale auth — then launches straight into the TUI to hatch the bot.
 
 ## Quick Start
 
@@ -65,13 +65,13 @@ The wizard walks through six steps interactively:
 |------|-------------|
 | AI Providers | Menu to add Anthropic, Gemini, OpenAI, OpenCode Zen/Go, Ollama (local or remote via OpenWebUI), DeepSeek, xAI, Mistral, OpenRouter, Together, LiteLLM, or any custom OpenAI-compatible endpoint |
 | Embeddings | OpenAI API key for memory search (text-embedding-3-small) — separate from model providers |
-| Model Roles | Choose "OpenCode Go Optimized" template (tiered models with rate-limit-aware sub-agent delegation) or manually assign models per role: primary, fallbacks, sub-agents, heartbeat |
+| Model Roles | Choose "OpenCode Go 4 Mains" (current models), "OpenCode Go Future" (MiMo-V2 when available), or manually assign models per role: primary, fallbacks, sub-agents, heartbeat |
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
-| Onboard | Launches `openclaw onboard` TUI to pair Telegram and hatch the bot |
+| Launch | Restarts gateway, launches `openclaw tui` directly to hatch the bot (skips redundant onboard wizard) |
 
-All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard hands off to the interactive `openclaw onboard` TUI so you can pair your Telegram bot and verify everything works — no extra commands needed.
+All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard restarts the gateway and launches `openclaw tui` directly — no extra commands needed. This is where the bot reads SOUL.md for the first time and "hatches" with its personality.
 
 ### Scripted / Non-Interactive Mode
 
@@ -81,8 +81,8 @@ For automation or repeatable deployments, pass everything as flags:
 bash ~/OpenClaw/openclaw-postinstall.sh \
   --provider opencode-go --provider-key sk-... \
   --provider ollama --ollama-url https://openwebui.example.com \
-  --primary-model opencode-go/MiMo-V2-Omni \
-  --fallback-models "opencode-go/kimi-k2.5, opencode-go/minimax-m2.7" \
+  --primary-model opencode-go/kimi-k2.5 \
+  --fallback-models "opencode-go/minimax-m2.7, opencode-go/glm-5" \
   --heartbeat-model opencode-go/minimax-m2.5 \
   --openai-key sk-... \
   --telegram-token 123456:ABCdef... \
@@ -91,7 +91,7 @@ bash ~/OpenClaw/openclaw-postinstall.sh \
   --non-interactive
 ```
 
-Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, the onboard step is skipped (run `openclaw onboard` separately). Run `bash openclaw-postinstall.sh --help` for all flags.
+Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, the TUI launch is skipped (run `openclaw tui` separately). Run `bash openclaw-postinstall.sh --help` for all flags.
 
 ## File Structure
 
@@ -135,17 +135,19 @@ Config template with placeholder tokens:
 - `__GATEWAY_TOKEN__` — auto-replaced with random hex during install
 - `__TELEGRAM_BOT_TOKEN__` — set by the post-install wizard or manually
 
-Default model config uses OpenCode Go ($10/month subscription) with a tiered architecture designed to spread rate limits across independent model pools:
+Default model config uses OpenCode Go ($10/month subscription) with a tiered architecture designed to spread rate limits across independent model pools. The "4 Mains" template ships as the default, using only the 4 models currently available:
 
 | Role | Model | Rate Limit | Purpose |
 |------|-------|-----------|---------|
-| Primary | MiMo-V2-Omni | ~10,900/mo | Main conversation + reasoning (multimodal) |
-| Fallback 1 | Kimi K2.5 | ~9,250/mo | Graceful degradation if Omni rate-limits |
-| Fallback 2 | MiniMax M2.7 | ~70,000/mo | High-headroom fallback, keeps lights on |
+| Primary | Kimi K2.5 | ~9,250/mo | Main conversation + reasoning (strongest available) |
+| Fallback 1 | MiniMax M2.7 | ~70,000/mo | High-headroom fallback, keeps lights on |
+| Fallback 2 | GLM-5 | ~5,750/mo | Secondary fallback for provider diversity |
 | Sub-agents | MiniMax M2.7 | ~70,000/mo | Grunt work — research, tool calls, delegation |
 | Heartbeat | MiniMax M2.5 | ~100,000/mo | Background pings, cheapest possible |
 
-Concurrency capped at 2 main / 3 sub-agents to avoid rate-limit walls on subscription throttling. Context pruning with 6h TTL, compaction flush at 40k tokens. Sub-agents use a separate model pool from the primary to preserve conversational quota. The agent is instructed (via AGENTS.md) to escalate to MiMo-V2-Pro for complex tasks requiring deep reasoning or 1M context.
+A "Future" template is also available for when MiMo-V2-Omni (multimodal, ~10,900/mo) and MiMo-V2-Pro (1M context, ~6,450/mo) launch on OpenCode Go.
+
+Concurrency capped at 2 main / 3 sub-agents to avoid rate-limit walls on subscription throttling. Context pruning with 6h TTL, compaction flush at 40k tokens. Sub-agents use a separate model pool from the primary to preserve conversational quota. The agent is instructed (via AGENTS.md) to escalate to heavier models for complex tasks when available.
 
 Default security posture (single-operator, personal assistant behind Tailscale):
 

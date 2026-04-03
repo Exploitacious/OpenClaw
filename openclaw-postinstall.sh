@@ -10,8 +10,8 @@
 #   Interactive:  bash openclaw-postinstall.sh
 #   Scripted:     bash openclaw-postinstall.sh \
 #                   --provider opencode-go --provider-key sk-... \
-#                   --primary-model opencode-go/MiMo-V2-Omni \
-#                   --fallback-models "opencode-go/kimi-k2.5, opencode-go/minimax-m2.7" \
+#                   --primary-model opencode-go/kimi-k2.5 \
+#                   --fallback-models "opencode-go/minimax-m2.7, opencode-go/glm-5" \
 #                   --heartbeat-model opencode-go/minimax-m2.5 \
 #                   --openai-key sk-... \
 #                   --telegram-token 123456:ABC... \
@@ -59,7 +59,7 @@ PROVIDER_REGISTRY=(
   "OpenAI Codex (ChatGPT OAuth)|openai-codex||openai-codex/gpt-5.4, openai-codex/gpt-5.3-codex"
   "OpenRouter|openrouter-api-key|--openrouter-api-key|openrouter/google/gemini-3-flash-preview"
   "OpenCode Zen|opencode-zen|--opencode-zen-api-key|opencode-zen/kimi-k2.5, opencode-zen/glm-5"
-  "OpenCode Go|opencode-go|--opencode-go-api-key|opencode-go/MiMo-V2-Omni, opencode-go/kimi-k2.5, opencode-go/minimax-m2.7"
+  "OpenCode Go|opencode-go|--opencode-go-api-key|opencode-go/kimi-k2.5, opencode-go/minimax-m2.7, opencode-go/minimax-m2.5"
   "Ollama|ollama||ollama/llama4, ollama/qwen3"
   "DeepSeek|deepseek-api-key|--deepseek-api-key|deepseek/deepseek-chat, deepseek/deepseek-reasoner"
   "xAI (Grok)|xai-api-key|--xai-api-key|xai/grok-3, xai/grok-3-mini"
@@ -123,7 +123,7 @@ Embeddings:
   --openai-key <key>        OpenAI key (for memory embeddings only)
 
 Model Roles:
-  --primary-model <model>   Primary model (e.g. opencode-go/MiMo-V2-Omni)
+  --primary-model <model>   Primary model (e.g. opencode-go/kimi-k2.5)
   --fallback-models <csv>   Comma-separated fallback models
   --heartbeat-model <model> Heartbeat/lightweight model
 
@@ -532,8 +532,9 @@ step_model_config() {
     echo ""
     msg_info "How would you like to configure models?"
     echo ""
-    printf "   ${BL} 1${CL}) OpenCode Go Optimized — tiered models, rate-limit-aware sub-agents\n"
-    printf "   ${BL} 2${CL}) Manual — set each role individually\n"
+    printf "   ${BL} 1${CL}) OpenCode Go 4 Mains — tiered config using the 4 currently available models\n"
+    printf "   ${BL} 2${CL}) OpenCode Go Future — full tiered config (MiMo-V2-Omni/Pro when available)\n"
+    printf "   ${BL} 3${CL}) Manual — set each role individually\n"
     printf "   ${BL} s${CL}) Skip — keep current config\n"
     echo ""
     printf "   ${BL}Pick${CL}: "
@@ -544,9 +545,12 @@ step_model_config() {
         msg_ok "Model config unchanged"
         return 0 ;;
       1)
-        _model_template_opencode_go
+        _model_template_opencode_go_4mains
         return 0 ;;
       2)
+        _model_template_opencode_go_future
+        return 0 ;;
+      3)
         _model_manual
         return 0 ;;
       *)
@@ -559,14 +563,92 @@ step_model_config() {
   _model_apply_flags
 }
 
-# -- OpenCode Go Optimized template --------------------------------------------
-_model_template_opencode_go() {
+# -- OpenCode Go 4 Mains template ----------------------------------------------
+# Uses only the 4 models currently available on OpenCode Go:
+# Kimi K2.5, GLM-5, MiniMax M2.7, MiniMax M2.5
+_model_template_opencode_go_4mains() {
   echo ""
-  msg_info "OpenCode Go Optimized template"
-  msg_dim "Tiered model architecture designed for subscription rate limits."
-  msg_dim "Primary model handles conversation; sub-agents use a separate high-quota"
-  msg_dim "model pool to preserve your conversational budget. AGENTS.md instructs"
-  msg_dim "the agent to escalate to MiMo-V2-Pro for complex tasks."
+  msg_info "OpenCode Go 4 Mains"
+  msg_dim "Uses the 4 models currently available on OpenCode Go."
+  msg_dim "Kimi K2.5 handles conversation (strongest reasoning)."
+  msg_dim "MiniMax M2.7 handles sub-agents (highest usable quota)."
+  msg_dim "MiniMax M2.5 handles heartbeat (cheapest)."
+  msg_dim "GLM-5 available as secondary fallback."
+  echo ""
+
+  local G4_PRIMARY="" G4_FALLBACKS="" G4_SUBAGENT="" G4_HEARTBEAT=""
+
+  msg_info "Primary model — handles direct conversation and reasoning."
+  msg_dim "Default: opencode-go/kimi-k2.5 (~9,250 req/mo, strongest reasoning)"
+  prompt_value G4_PRIMARY "Primary model" "${CURRENT_PRIMARY:-opencode-go/kimi-k2.5}"
+
+  msg_info "Fallback models (comma-separated) — used when primary hits rate limits."
+  msg_dim "Default: opencode-go/minimax-m2.7, opencode-go/glm-5"
+  prompt_value G4_FALLBACKS "Fallback models" "${CURRENT_FALLBACKS:-opencode-go/minimax-m2.7, opencode-go/glm-5}"
+
+  msg_info "Sub-agent model — delegated tasks (research, tool calls, grunt work)."
+  msg_dim "Default: opencode-go/minimax-m2.7 (~70,000 req/mo — high headroom)"
+  msg_dim "Uses a SEPARATE rate limit pool from primary to preserve conversation quota."
+  prompt_value G4_SUBAGENT "Sub-agent model" "${CURRENT_SUBAGENT:-opencode-go/minimax-m2.7}"
+
+  msg_info "Heartbeat model — background pings, cheapest possible."
+  msg_dim "Default: opencode-go/minimax-m2.5 (~100,000 req/mo)"
+  prompt_value G4_HEARTBEAT "Heartbeat model" "${CURRENT_HEARTBEAT:-opencode-go/minimax-m2.5}"
+
+  # Apply: primary
+  if [[ -n "$G4_PRIMARY" && "$G4_PRIMARY" != "$CURRENT_PRIMARY" ]]; then
+    openclaw config set agents.defaults.model.primary "$G4_PRIMARY" >/dev/null 2>&1
+    msg_ok "Primary: ${G4_PRIMARY}"
+  else
+    msg_ok "Primary unchanged: ${CURRENT_PRIMARY}"
+  fi
+
+  # Apply: fallbacks
+  if [[ -n "$G4_FALLBACKS" && "$G4_FALLBACKS" != "$CURRENT_FALLBACKS" ]]; then
+    local FB_JSON
+    FB_JSON=$(echo "$G4_FALLBACKS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s .)
+    jq --argjson fb "$FB_JSON" '.agents.defaults.model.fallbacks = $fb' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Fallbacks: ${G4_FALLBACKS}"
+  fi
+
+  # Apply: sub-agents (separate model from primary)
+  if [[ -n "$G4_SUBAGENT" && "$G4_SUBAGENT" != "$CURRENT_SUBAGENT" ]]; then
+    jq --arg sa "$G4_SUBAGENT" \
+      '.agents.defaults.subagents.model = {"primary": $sa, "fallbacks": ["opencode-go/minimax-m2.5"]}' \
+      "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+    mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+    msg_ok "Sub-agents: ${G4_SUBAGENT} (separate pool from primary)"
+  fi
+
+  # Apply: heartbeat
+  if [[ -n "$G4_HEARTBEAT" && "$G4_HEARTBEAT" != "$CURRENT_HEARTBEAT" ]]; then
+    openclaw config set agents.defaults.heartbeat.model "$G4_HEARTBEAT" >/dev/null 2>&1
+    msg_ok "Heartbeat: ${G4_HEARTBEAT}"
+  else
+    msg_ok "Heartbeat unchanged: ${CURRENT_HEARTBEAT}"
+  fi
+
+  # Apply: concurrency caps (subscription-safe)
+  jq '.agents.defaults.maxConcurrent = 2 | .agents.defaults.subagents.maxConcurrent = 3' \
+    "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+  mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+  msg_ok "Concurrency: 2 main / 3 sub-agents (subscription-safe)"
+
+  echo ""
+  msg_ok "OpenCode Go 4 Mains template applied"
+}
+
+# -- OpenCode Go Future template -----------------------------------------------
+# Full tiered config for when MiMo-V2-Omni and MiMo-V2-Pro become available.
+_model_template_opencode_go_future() {
+  echo ""
+  msg_info "OpenCode Go Future (MiMo-V2 models not yet available)"
+  msg_dim "Full tiered architecture for when MiMo-V2-Omni and MiMo-V2-Pro launch."
+  msg_dim "MiMo-V2-Omni handles conversation (multimodal); sub-agents use MiniMax M2.7"
+  msg_dim "to preserve conversational quota. AGENTS.md instructs the agent to escalate"
+  msg_dim "to MiMo-V2-Pro for complex tasks requiring 1M context."
+  msg_warn "Note: MiMo-V2 models are not yet available. Use '4 Mains' for now."
   echo ""
 
   local OG_PRIMARY="" OG_FALLBACKS="" OG_SUBAGENT="" OG_HEARTBEAT=""
@@ -630,7 +712,7 @@ _model_template_opencode_go() {
   msg_ok "Concurrency: 2 main / 3 sub-agents (subscription-safe)"
 
   echo ""
-  msg_ok "OpenCode Go Optimized template applied"
+  msg_ok "OpenCode Go Future template applied"
 }
 
 # -- Manual per-role config ----------------------------------------------------
@@ -1134,28 +1216,43 @@ print_summary() {
 }
 
 # =============================================================================
-# Launch onboard
+# Launch TUI (hatch the bot)
 # =============================================================================
-step_onboard() {
+step_launch() {
   if $NON_INTERACTIVE; then
     return 0
   fi
 
   echo ""
-  if prompt_yesno "Launch OpenClaw onboard now to hatch the bot?"; then
+  msg_info "Setup complete. The bot is ready to hatch."
+  msg_dim "The TUI will start a fresh session where the bot reads SOUL.md and"
+  msg_dim "AGENTS.md for the first time — this is where it learns who it is."
+  msg_dim ""
+  msg_warn "IMPORTANT: Do NOT message the bot on Telegram until the TUI session"
+  msg_warn "has started and you see the 'connected' status bar. Messaging early"
+  msg_warn "creates a blank session that skips the personality injection."
+  echo ""
+
+  if prompt_yesno "Launch TUI now to hatch the bot?"; then
     echo ""
-    msg_ok "Handing off to openclaw onboard..."
+    msg_ok "Restarting gateway and launching TUI..."
     echo ""
+    # Restart gateway to pick up all config changes
+    openclaw gateway restart >/dev/null 2>&1 || true
+    sleep 2
     # exec replaces this process so the TUI gets full terminal control
-    exec openclaw onboard
+    exec openclaw tui
   else
     echo ""
-    msg_info "Run when ready: openclaw onboard"
+    msg_info "When ready, restart the gateway and launch TUI:"
     echo ""
+    echo -e "  ${BL}openclaw gateway restart${CL}    Pick up config changes"
+    echo -e "  ${BL}openclaw tui${CL}                Launch TUI and hatch"
+    echo ""
+    echo -e "  ${DM}Other useful commands:${CL}"
     echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
     echo -e "  ${BL}openclaw gateway status${CL}     Gateway info"
     echo -e "  ${BL}openclaw logs --follow${CL}      Live logs"
-    echo -e "  ${BL}openclaw tui${CL}                Terminal UI"
     echo ""
   fi
 }
@@ -1171,7 +1268,7 @@ main() {
   step_tailscale
   step_finalize
   print_summary
-  step_onboard
+  step_launch
 }
 
 main "$@"
