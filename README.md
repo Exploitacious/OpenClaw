@@ -69,9 +69,9 @@ The wizard walks through six steps interactively:
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
-| Launch | Restarts gateway, launches `openclaw tui` directly to hatch the bot (skips redundant onboard wizard) |
+| Launch | Restarts gateway, runs `openclaw onboard` (hooks + hatch only), then launches TUI |
 
-All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard restarts the gateway and launches `openclaw tui` directly — no extra commands needed. This is where the bot reads SOUL.md for the first time and "hatches" with its personality.
+All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard restarts the gateway and runs `openclaw onboard` (skipping everything already configured) to initialize hooks and hatch the bot in the TUI. When onboard asks about hooks, select all of them (boot.md, bootstrap-extra-files, command-logger, session-memory). Choose "TUI" when asked how to hatch.
 
 ### Scripted / Non-Interactive Mode
 
@@ -99,7 +99,8 @@ Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama s
 OpenClaw/
 ├── openclaw.sh              # Proxmox host script (creates LXC + runs install)
 ├── openclaw-install.sh      # Install script (standalone or via Proxmox host)
-├── openclaw-postinstall.sh  # Post-install wizard (providers, models, Telegram, onboard)
+├── openclaw-postinstall.sh  # Post-install wizard (providers, models, Telegram, hatch)
+├── openclaw-reset.sh        # Reset agent (wipe memory/sessions, re-apply templates)
 ├── templates/
 │   ├── openclaw.json.tpl    # Config template (gateway token auto-generated)
 │   ├── soul.md.tpl          # Agent personality scaffold
@@ -189,6 +190,27 @@ openclaw-logs     # Shortcut for openclaw logs --follow
 openclaw-status   # Shortcut for openclaw gateway status
 openclaw-backup   # Run backup now
 ```
+
+## Resetting the Agent
+
+To wipe the agent's memory and personality without reinstalling OpenClaw:
+
+```bash
+bash ~/OpenClaw/openclaw-reset.sh
+```
+
+This wipes memory (vector store + markdown logs), sessions (conversation history), and workspace files (SOUL.md, AGENTS.md, USER.md), then re-applies templates from the helper repo and launches onboard to re-hatch. All API keys, provider credentials, gateway tokens, and config settings are preserved.
+
+Options:
+
+```bash
+bash ~/OpenClaw/openclaw-reset.sh --keep-soul     # Preserve personality, wipe only memory/sessions
+bash ~/OpenClaw/openclaw-reset.sh --full           # Also reset openclaw.json to template defaults
+bash ~/OpenClaw/openclaw-reset.sh --skip-hatch     # Don't launch onboard after reset
+bash ~/OpenClaw/openclaw-reset.sh --confirm        # Skip confirmation prompt (for scripting)
+```
+
+A timestamped backup is created automatically before every reset at `~/backups/openclaw-pre-reset-*.tar.gz`.
 
 ## Requirements
 

@@ -861,6 +861,134 @@ step_telegram() {
 # =============================================================================
 # Step 5: Tailscale
 # =============================================================================
+# -- Tailscale browser auth with timeout and retry -----------------------------
+_tailscale_browser_auth() {
+  local MAX_WAIT=120  # seconds
+  local AUTH_URL=""
+
+  msg_info "Starting Tailscale browser login..."
+  msg_dim "A URL will appear below. Open it in any browser to authenticate."
+  msg_dim "You have ${MAX_WAIT} seconds before it times out."
+  echo ""
+
+  # Run tailscale up in the background, capture its output for the URL
+  local TS_LOG
+  TS_LOG=$(mktemp)
+  sudo tailscale up 2>&1 | tee "$TS_LOG" &
+  local TS_PID=$!
+
+  # Wait for auth to complete or timeout
+  local ELAPSED=0
+  while kill -0 "$TS_PID" 2>/dev/null; do
+    sleep 3
+    ELAPSED=$((ELAPSED + 3))
+
+    # Check if tailscale is now connected (auth succeeded)
+    local CHECK_STATE
+    CHECK_STATE=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "Unknown"' 2>/dev/null || echo "Unknown")
+    if [[ "$CHECK_STATE" == "Running" ]]; then
+      # Auth succeeded — clean up background process
+      wait "$TS_PID" 2>/dev/null || true
+      rm -f "$TS_LOG"
+      echo ""
+      msg_ok "Tailscale authenticated"
+      return 0
+    fi
+
+    if [[ $ELAPSED -ge $MAX_WAIT ]]; then
+      # Timeout — kill the background process
+      sudo kill "$TS_PID" 2>/dev/null || true
+      wait "$TS_PID" 2>/dev/null || true
+      rm -f "$TS_LOG"
+      echo ""
+      msg_warn "Tailscale auth timed out after ${MAX_WAIT} seconds."
+      echo ""
+      printf "   ${BL} r${CL}) Retry browser login\n"
+      printf "   ${BL} k${CL}) Switch to auth key instead\n"
+      printf "   ${BL} s${CL}) Skip — set up Tailscale later\n"
+      echo ""
+      printf "   ${BL}Pick${CL}: "
+      read -r RETRY_CHOICE
+
+      case "${RETRY_CHOICE,,}" in
+        r|retry)
+          _tailscale_browser_auth
+          return $?
+          ;;
+        k|key)
+          echo ""
+          msg_info "Generate a key at: https://login.tailscale.com/admin/settings/keys"
+          local TS_KEY_RETRY=""
+          prompt_value TS_KEY_RETRY "Tailscale auth key" "" "true"
+          if [[ -n "$TS_KEY_RETRY" ]]; then
+            msg_info "Authenticating..."
+            sudo tailscale up --auth-key="$TS_KEY_RETRY" 2>&1 || {
+              msg_error "Auth key rejected. Try: sudo tailscale up"
+              return 0
+            }
+            msg_ok "Tailscale authenticated"
+          else
+            msg_warn "No key provided. Skipping."
+          fi
+          return 0
+          ;;
+        *)
+          msg_warn "Skipped. Run later: sudo tailscale up"
+          return 0
+          ;;
+      esac
+    fi
+  done
+
+  # tailscale up exited on its own — check result
+  wait "$TS_PID" 2>/dev/null
+  local EXIT_CODE=$?
+  rm -f "$TS_LOG"
+
+  if [[ $EXIT_CODE -eq 0 ]]; then
+    local FINAL_STATE
+    FINAL_STATE=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "Unknown"' 2>/dev/null || echo "Unknown")
+    if [[ "$FINAL_STATE" == "Running" ]]; then
+      msg_ok "Tailscale authenticated"
+    else
+      msg_warn "Tailscale exited but state is '${FINAL_STATE}'. Check: sudo tailscale status"
+    fi
+  else
+    msg_error "Tailscale auth failed (exit code ${EXIT_CODE})."
+    echo ""
+    printf "   ${BL} r${CL}) Retry browser login\n"
+    printf "   ${BL} k${CL}) Switch to auth key instead\n"
+    printf "   ${BL} s${CL}) Skip — set up Tailscale later\n"
+    echo ""
+    printf "   ${BL}Pick${CL}: "
+    read -r FAIL_CHOICE
+
+    case "${FAIL_CHOICE,,}" in
+      r|retry)
+        _tailscale_browser_auth
+        return $?
+        ;;
+      k|key)
+        echo ""
+        msg_info "Generate a key at: https://login.tailscale.com/admin/settings/keys"
+        local TS_KEY_FAIL=""
+        prompt_value TS_KEY_FAIL "Tailscale auth key" "" "true"
+        if [[ -n "$TS_KEY_FAIL" ]]; then
+          msg_info "Authenticating..."
+          sudo tailscale up --auth-key="$TS_KEY_FAIL" 2>&1 || {
+            msg_error "Auth key rejected. Try: sudo tailscale up"
+            return 0
+          }
+          msg_ok "Tailscale authenticated"
+        fi
+        ;;
+      *)
+        msg_warn "Skipped. Run later: sudo tailscale up"
+        ;;
+    esac
+  fi
+}
+
 step_tailscale() {
   msg_step "Step 5/6: Tailscale"
 
@@ -921,14 +1049,7 @@ step_tailscale() {
 
       case "${TS_CHOICE,,}" in
         1)
-          msg_info "Running: sudo tailscale up"
-          msg_info "Copy the URL below and open it in any browser to authenticate."
-          echo ""
-          sudo tailscale up 2>&1 || {
-            msg_error "Tailscale auth failed. Try later: sudo tailscale up"
-            return 0
-          }
-          msg_ok "Tailscale authenticated"
+          _tailscale_browser_auth
           ;;
         2)
           echo ""
@@ -1216,7 +1337,7 @@ print_summary() {
 }
 
 # =============================================================================
-# Launch TUI (hatch the bot)
+# Launch: onboard (hooks + hatch) → TUI
 # =============================================================================
 step_launch() {
   if $NON_INTERACTIVE; then
@@ -1224,30 +1345,40 @@ step_launch() {
   fi
 
   echo ""
-  msg_info "Setup complete. The bot is ready to hatch."
-  msg_dim "The TUI will start a fresh session where the bot reads SOUL.md and"
-  msg_dim "AGENTS.md for the first time — this is where it learns who it is."
+  msg_info "Setup complete. Ready to hatch the bot."
+  msg_dim ""
+  msg_dim "OpenClaw onboard will now run to initialize hooks and hatch the bot."
+  msg_dim "Most steps are already done — it will skip providers, models, and Telegram."
+  msg_dim "When onboard asks about hooks, select ALL of them:"
+  msg_dim "  boot.md, bootstrap-extra-files, command-logger, session-memory"
+  msg_dim ""
+  msg_dim "When asked how to hatch, choose 'TUI (recommended)'."
   msg_dim ""
   msg_warn "IMPORTANT: Do NOT message the bot on Telegram until the TUI session"
   msg_warn "has started and you see the 'connected' status bar. Messaging early"
   msg_warn "creates a blank session that skips the personality injection."
   echo ""
 
-  if prompt_yesno "Launch TUI now to hatch the bot?"; then
+  if prompt_yesno "Launch onboard now to hatch the bot?"; then
     echo ""
-    msg_ok "Restarting gateway and launching TUI..."
+    msg_ok "Restarting gateway and launching onboard..."
     echo ""
     # Restart gateway to pick up all config changes
     openclaw gateway restart >/dev/null 2>&1 || true
     sleep 2
-    # exec replaces this process so the TUI gets full terminal control
-    exec openclaw tui
+    # exec replaces this process so onboard gets full terminal control.
+    # Onboard handles: hook initialization → hatch method → TUI launch.
+    # We skip auth, channels, health, and skills since the wizard already configured them.
+    exec openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills
   else
     echo ""
-    msg_info "When ready, restart the gateway and launch TUI:"
+    msg_info "When ready:"
     echo ""
-    echo -e "  ${BL}openclaw gateway restart${CL}    Pick up config changes"
-    echo -e "  ${BL}openclaw tui${CL}                Launch TUI and hatch"
+    echo -e "  ${BL}openclaw gateway restart${CL}"
+    echo -e "  ${BL}openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills${CL}"
+    echo ""
+    echo -e "  ${DM}Or if hooks are already initialized:${CL}"
+    echo -e "  ${BL}openclaw tui${CL}"
     echo ""
     echo -e "  ${DM}Other useful commands:${CL}"
     echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
