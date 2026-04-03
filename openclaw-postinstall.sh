@@ -1240,6 +1240,14 @@ step_finalize() {
     fi
   fi
 
+  # Enable internal hooks (config JSON alone is not sufficient — must use CLI)
+  msg_info "Enabling internal hooks..."
+  openclaw hooks enable boot-md 2>/dev/null || true
+  openclaw hooks enable bootstrap-extra-files 2>/dev/null || true
+  openclaw hooks enable command-logger 2>/dev/null || true
+  openclaw hooks enable session-memory 2>/dev/null || true
+  msg_ok "Hooks enabled (boot-md, bootstrap-extra-files, command-logger, session-memory)"
+
   # Doctor
   msg_info "Running openclaw doctor --fix..."
   openclaw doctor --fix 2>&1 | tail -5 || true
@@ -1337,7 +1345,7 @@ print_summary() {
 }
 
 # =============================================================================
-# Launch: onboard (hooks + hatch) → TUI
+# Initialize hooks and launch TUI to hatch the bot
 # =============================================================================
 step_launch() {
   if $NON_INTERACTIVE; then
@@ -1347,38 +1355,26 @@ step_launch() {
   echo ""
   msg_info "Setup complete. Ready to hatch the bot."
   msg_dim ""
-  msg_dim "OpenClaw onboard will now run to initialize hooks and hatch the bot."
-  msg_dim "Most steps are already done — it will skip providers, models, and Telegram."
-  msg_dim "When onboard asks about hooks, select ALL of them:"
-  msg_dim "  boot.md, bootstrap-extra-files, command-logger, session-memory"
-  msg_dim ""
-  msg_dim "When asked how to hatch, choose 'TUI (recommended)'."
-  msg_dim ""
   msg_warn "IMPORTANT: Do NOT message the bot on Telegram until the TUI session"
   msg_warn "has started and you see the 'connected' status bar. Messaging early"
   msg_warn "creates a blank session that skips the personality injection."
   echo ""
 
-  if prompt_yesno "Launch onboard now to hatch the bot?"; then
+  if prompt_yesno "Initialize hooks and launch TUI now?"; then
     echo ""
-    msg_ok "Restarting gateway and launching onboard..."
-    echo ""
-    # Restart gateway to pick up all config changes
-    openclaw gateway restart >/dev/null 2>&1 || true
-    sleep 2
-    # exec replaces this process so onboard gets full terminal control.
-    # Onboard handles: hook initialization → hatch method → TUI launch.
-    # We skip auth, channels, health, and skills since the wizard already configured them.
-    exec openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills
+    _enable_hooks_and_launch
   else
     echo ""
-    msg_info "When ready:"
+    msg_info "When ready, run these commands:"
     echo ""
+    echo -e "  ${BL}openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory${CL}"
     echo -e "  ${BL}openclaw gateway restart${CL}"
-    echo -e "  ${BL}openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills${CL}"
-    echo ""
-    echo -e "  ${DM}Or if hooks are already initialized:${CL}"
+    echo -e "  ${DM}(wait 3 seconds)${CL}"
+    echo -e "  ${BL}openclaw gateway restart${CL}"
     echo -e "  ${BL}openclaw tui${CL}"
+    echo ""
+    echo -e "  ${DM}The double restart works around a known race condition where${CL}"
+    echo -e "  ${DM}boot-md registers after the startup event fires on first start.${CL}"
     echo ""
     echo -e "  ${DM}Other useful commands:${CL}"
     echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"
@@ -1386,6 +1382,46 @@ step_launch() {
     echo -e "  ${BL}openclaw logs --follow${CL}      Live logs"
     echo ""
   fi
+}
+
+# -- Enable hooks and launch TUI with double-restart ---------------------------
+# Hooks must be explicitly enabled via CLI, not just config JSON.
+# The double gateway restart works around a known race condition where boot-md
+# registers for gateway:startup AFTER the event fires on first start.
+_enable_hooks_and_launch() {
+  msg_info "Enabling internal hooks..."
+  openclaw hooks enable boot-md 2>/dev/null || msg_warn "Could not enable boot-md"
+  openclaw hooks enable bootstrap-extra-files 2>/dev/null || msg_warn "Could not enable bootstrap-extra-files"
+  openclaw hooks enable command-logger 2>/dev/null || msg_warn "Could not enable command-logger"
+  openclaw hooks enable session-memory 2>/dev/null || msg_warn "Could not enable session-memory"
+  msg_ok "Hooks enabled"
+
+  # First restart: gateway picks up config + hooks register with runtime
+  msg_info "Restarting gateway (pass 1 — register hooks)..."
+  openclaw gateway restart >/dev/null 2>&1 || true
+  sleep 3
+
+  # Second restart: boot-md is now registered and will catch gateway:startup
+  msg_info "Restarting gateway (pass 2 — trigger boot-md)..."
+  openclaw gateway restart >/dev/null 2>&1 || true
+  sleep 3
+
+  # Verify gateway is running
+  local GW_CHECK
+  GW_CHECK=$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo "unknown")
+  if [[ "$GW_CHECK" == "active" ]]; then
+    msg_ok "Gateway running with hooks initialized"
+  else
+    msg_warn "Gateway status: ${GW_CHECK} — TUI may still work"
+  fi
+
+  echo ""
+  msg_ok "Launching TUI — this is where the bot reads SOUL.md and hatches."
+  msg_dim "Say hello and verify the bot responds with its personality."
+  echo ""
+
+  # exec replaces this process so the TUI gets full terminal control
+  exec openclaw tui
 }
 
 # =============================================================================

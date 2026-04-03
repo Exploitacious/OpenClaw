@@ -303,30 +303,54 @@ msg_ok "Templates re-applied"
 echo ""
 
 if $SKIP_HATCH; then
-  msg_info "Skipped hatching. When ready:"
+  msg_info "Skipped hatching. When ready, run:"
   echo ""
-  echo -e "  ${BL}openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills${CL}"
-  echo ""
-  echo -e "  ${DM}Select all hooks, then choose 'TUI' to hatch.${CL}"
+  echo -e "  ${BL}openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory${CL}"
+  echo -e "  ${BL}openclaw gateway restart${CL}"
+  echo -e "  ${DM}(wait 3 seconds)${CL}"
+  echo -e "  ${BL}openclaw gateway restart${CL}"
+  echo -e "  ${BL}openclaw tui${CL}"
   echo ""
   exit 0
 fi
 
-msg_info "Launching onboard to re-hatch the bot..."
-msg_dim "Select all hooks when prompted, then choose 'TUI' to hatch."
-msg_dim ""
 msg_warn "Do NOT message the bot on Telegram until the TUI session is connected."
 echo ""
 
-printf "   ${BL}Press Enter to launch onboard (or 's' to skip)${CL}: "
+printf "   ${BL}Press Enter to initialize hooks and launch TUI (or 's' to skip)${CL}: "
 read -r HATCH_REPLY
 
 if [[ "${HATCH_REPLY,,}" != "s" ]]; then
   echo ""
-  exec openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills
+
+  # Enable hooks via CLI (config JSON alone is not sufficient)
+  msg_info "Enabling internal hooks..."
+  openclaw hooks enable boot-md 2>/dev/null || msg_warn "Could not enable boot-md"
+  openclaw hooks enable bootstrap-extra-files 2>/dev/null || msg_warn "Could not enable bootstrap-extra-files"
+  openclaw hooks enable command-logger 2>/dev/null || msg_warn "Could not enable command-logger"
+  openclaw hooks enable session-memory 2>/dev/null || msg_warn "Could not enable session-memory"
+  msg_ok "Hooks enabled"
+
+  # Double restart: first registers hooks, second triggers boot-md
+  # (works around known race condition where boot-md misses gateway:startup)
+  msg_info "Restarting gateway (pass 1 — register hooks)..."
+  openclaw gateway restart >/dev/null 2>&1 || true
+  sleep 3
+
+  msg_info "Restarting gateway (pass 2 — trigger boot-md)..."
+  openclaw gateway restart >/dev/null 2>&1 || true
+  sleep 3
+
+  msg_ok "Launching TUI — say hello and verify the bot responds with its personality."
+  echo ""
+  exec openclaw tui
 else
   echo ""
   msg_info "When ready:"
-  echo -e "  ${BL}openclaw onboard --skip-auth --skip-channels --skip-health --skip-skills${CL}"
+  echo ""
+  echo -e "  ${BL}openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory${CL}"
+  echo -e "  ${BL}openclaw gateway restart${CL}    ${DM}(wait 3s)${CL}"
+  echo -e "  ${BL}openclaw gateway restart${CL}    ${DM}(double restart for boot-md race condition)${CL}"
+  echo -e "  ${BL}openclaw tui${CL}"
   echo ""
 fi

@@ -69,9 +69,9 @@ The wizard walks through six steps interactively:
 | Telegram | Bot token from @BotFather + your Telegram user ID for DM access |
 | Tailscale | Authentication + Tailscale Serve on port 18789 |
 | Finalize | SOUL.md editor prompt, gateway restart, `openclaw doctor --fix`, git commit |
-| Launch | Restarts gateway, runs `openclaw onboard` (hooks + hatch only), then launches TUI |
+| Launch | Enables hooks, double-restarts gateway (boot-md race condition fix), launches TUI |
 
-All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard restarts the gateway and runs `openclaw onboard` (skipping everything already configured) to initialize hooks and hatch the bot in the TUI. When onboard asks about hooks, select all of them (boot.md, bootstrap-extra-files, command-logger, session-memory). Choose "TUI" when asked how to hatch.
+All steps detect existing config and skip what's already done. Re-run safely at any time. At the end, the wizard enables hooks via `openclaw hooks enable`, performs a double gateway restart (to work around a known race condition where boot-md misses the first startup event), and launches `openclaw tui` to hatch the bot. The TUI session is where the bot reads SOUL.md for the first time and develops its personality.
 
 ### Scripted / Non-Interactive Mode
 
@@ -91,7 +91,15 @@ bash ~/OpenClaw/openclaw-postinstall.sh \
   --non-interactive
 ```
 
-Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, the TUI launch is skipped (run `openclaw tui` separately). Run `bash openclaw-postinstall.sh --help` for all flags.
+Use `--provider` / `--provider-key` pairs — repeat for each provider. Ollama supports both local installs and remote proxies (OpenWebUI) via `--ollama-url` with optional API key. In non-interactive mode, the TUI launch is skipped — enable hooks and launch manually:
+
+```bash
+openclaw hooks enable boot-md bootstrap-extra-files command-logger session-memory
+openclaw gateway restart && sleep 3 && openclaw gateway restart
+openclaw tui
+```
+
+Run `bash openclaw-postinstall.sh --help` for all flags.
 
 ## File Structure
 
