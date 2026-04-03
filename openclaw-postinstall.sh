@@ -1328,6 +1328,106 @@ print_summary() {
 }
 
 # =============================================================================
+# Install Memory Plugin (after hatching, so workspace is clean for onboard)
+# =============================================================================
+install_memory_plugin() {
+  msg_info "Installing memory-lancedb-hybrid plugin..."
+  (
+    export PATH="${HOME}/.npm-global/bin:${PATH}"
+    cd ~/.openclaw/workspace && \
+    mkdir -p skills && \
+    cd skills && \
+    git clone https://github.com/CortexReach/memory-lancedb-pro.git memory-lancedb-hybrid 2>/dev/null && \
+    cd memory-lancedb-hybrid && \
+    npm install --omit=dev 2>&1 | tail -3
+  ) || {
+    msg_warn "Memory plugin install failed. Install manually later:"
+    msg_warn "  cd ~/.openclaw/workspace/skills && git clone https://github.com/CortexReach/memory-lancedb-pro.git memory-lancedb-hybrid && cd memory-lancedb-hybrid && npm install --omit=dev"
+    return 0
+  }
+  msg_ok "Memory plugin installed"
+}
+
+# =============================================================================
+# Create USER.md scaffold (after hatching, so workspace is clean for onboard)
+# =============================================================================
+create_user_md() {
+  local WS_DIR="${HOME}/.openclaw/workspace"
+  if [[ ! -f "${WS_DIR}/USER.md" ]]; then
+    cat > "${WS_DIR}/USER.md" << 'USERMD'
+# User Context
+
+## About the User
+<!-- Add information about yourself here so the agent can personalize responses -->
+
+## Preferences
+<!-- Communication style, topics of interest, tools you use -->
+
+## Active Projects
+<!-- What you're currently working on -->
+USERMD
+    msg_ok "USER.md scaffold created"
+  fi
+}
+
+# =============================================================================
+# Temporarily swap primary model to OpenAI for hatching
+# =============================================================================
+# OpenClaw's hatching process requires a model that supports tool-calling
+# during initialization. Kimi K2.5 (and other OpenCode Go models) fail this
+# flow (GitHub Issue #55942). We temporarily swap to a cheap OpenAI model
+# (the key is already present for embeddings), then restore the original
+# model after hatching completes.
+#
+# SAVED_PRIMARY is intentionally global — set by swap_model_for_hatch(),
+# consumed by restore_model_after_hatch().
+SAVED_PRIMARY=""
+
+swap_model_for_hatch() {
+  local HATCH_MODEL="openai/gpt-4o-mini"
+
+  # Save current primary model (global — used by restore_model_after_hatch)
+  SAVED_PRIMARY=$(jq -r '.agents.defaults.model.primary // .agents.defaults.model // ""' "$OC_CONFIG" 2>/dev/null)
+
+  if [[ -z "$SAVED_PRIMARY" || "$SAVED_PRIMARY" == "null" ]]; then
+    msg_warn "No primary model set — skipping model swap"
+    return 0
+  fi
+
+  # Check if already an OpenAI model (no swap needed)
+  if [[ "$SAVED_PRIMARY" == openai/* ]]; then
+    msg_dim "Primary model is already OpenAI — no swap needed for hatching"
+    SAVED_PRIMARY=""  # Clear so restore_model_after_hatch is a no-op
+    return 0
+  fi
+
+  msg_info "Temporarily setting primary model to ${HATCH_MODEL} for hatching..."
+  msg_dim "(Original: ${SAVED_PRIMARY} — will be restored after hatch)"
+
+  jq --arg m "$HATCH_MODEL" '.agents.defaults.model.primary = $m' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+  mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+
+  # Restart gateway so it picks up the new model
+  systemctl --user restart openclaw-gateway.service 2>/dev/null || true
+  sleep 2
+}
+
+restore_model_after_hatch() {
+  if [[ -z "${SAVED_PRIMARY:-}" ]]; then
+    return 0
+  fi
+
+  msg_info "Restoring primary model to ${SAVED_PRIMARY}..."
+  jq --arg m "$SAVED_PRIMARY" '.agents.defaults.model.primary = $m' "$OC_CONFIG" > "${OC_CONFIG}.tmp"
+  mv "${OC_CONFIG}.tmp" "$OC_CONFIG"; chmod 600 "$OC_CONFIG"
+  msg_ok "Primary model restored: ${SAVED_PRIMARY}"
+
+  # Restart gateway with the production model
+  systemctl --user restart openclaw-gateway.service 2>/dev/null || true
+  sleep 2
+}
+
+# =============================================================================
 # Launch openclaw onboard to hatch the bot
 # =============================================================================
 step_launch() {
@@ -1353,15 +1453,59 @@ step_launch() {
 
   if prompt_yesno "Launch onboard now to hatch the bot?"; then
     echo ""
+
+    # Swap to OpenAI model for hatching (Kimi K2.5 can't handle tool-calling init)
+    swap_model_for_hatch
+
     msg_ok "Launching openclaw onboard..."
     echo ""
-    # exec replaces this process so onboard gets full terminal control
-    exec openclaw onboard
+
+    # Run onboard (NOT exec — we need control back for post-hatch steps)
+    openclaw onboard
+    local ONBOARD_EXIT=$?
+
+    echo ""
+
+    # Post-hatch: restore original model
+    restore_model_after_hatch
+
+    # Post-hatch: install memory plugin now that workspace is initialized
+    if [[ ! -d "${HOME}/.openclaw/workspace/skills/memory-lancedb-hybrid" ]]; then
+      install_memory_plugin
+    else
+      msg_dim "Memory plugin already installed"
+    fi
+
+    # Post-hatch: create USER.md scaffold
+    create_user_md
+
+    # Git commit post-hatch state
+    if [[ -d "${OC_DIR}/.git" ]]; then
+      cd "$OC_DIR"
+      git add -A 2>/dev/null || true
+      git commit -q -m "post-hatch: model restored, memory plugin installed $(date +%Y-%m-%d)" 2>/dev/null || true
+      msg_ok "Post-hatch state committed to git"
+    fi
+
+    if [[ $ONBOARD_EXIT -eq 0 ]]; then
+      msg_ok "Hatching complete!"
+    else
+      msg_warn "Onboard exited with code ${ONBOARD_EXIT}. You may need to re-run: openclaw onboard"
+    fi
   else
     echo ""
-    msg_info "When ready:"
+    msg_info "When ready, run the hatch manually:"
     echo ""
+    echo -e "  ${DM}# 1. Temporarily swap model for hatching:${CL}"
+    echo -e "  ${BL}openclaw config set agents.defaults.model.primary openai/gpt-4o-mini${CL}"
+    echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
+    echo ""
+    echo -e "  ${DM}# 2. Run onboard:${CL}"
     echo -e "  ${BL}openclaw onboard${CL}"
+    echo ""
+    echo -e "  ${DM}# 3. After hatching, restore your model:${CL}"
+    echo -e "  ${BL}openclaw config set agents.defaults.model.primary opencode-go/kimi-k2.5${CL}"
+    echo -e "  ${BL}systemctl --user restart openclaw-gateway.service${CL}"
     echo ""
     echo -e "  ${DM}Other useful commands:${CL}"
     echo -e "  ${BL}openclaw doctor --fix${CL}       Health check"

@@ -41,6 +41,7 @@ msg_error() { printf " ${CROSS} ${RD}%s${CL}\n" "$1"; }
 msg_info()  { printf "   ${BL}%s${CL}\n" "$1"; }
 msg_warn()  { printf "   ${YW}%s${CL}\n" "$1"; }
 msg_step()  { printf "\n ${GN}>>>${CL} %s\n" "$1"; }
+msg_dim()   { printf "   ${DM}%s${CL}\n" "$1"; }
 
 CLAW_USER="claw"
 CLAW_HOME="/home/${CLAW_USER}"
@@ -312,49 +313,31 @@ step_apply_templates() {
   # in ~/OpenClaw/templates/ and can be appended to AGENTS.md AFTER hatching
   # via the post-install wizard's finalize step.
 
-  # Create USER.md scaffold (safe — onboard checks for this but doesn't generate it interactively)
-  cat > "${WS_DIR}/USER.md" << 'USERMD'
-# User Context
-
-## About the User
-<!-- Add information about yourself here so the agent can personalize responses -->
-
-## Preferences
-<!-- Communication style, topics of interest, tools you use -->
-
-## Active Projects
-<!-- What you're currently working on -->
-USERMD
-  chown "${CLAW_USER}:${CLAW_USER}" "${WS_DIR}/USER.md"
-  msg_ok "USER.md scaffold created"
+  # NOTE: USER.md is NOT created here either. Any file in the workspace
+  # directory before onboard runs can trigger the hasUserContent check and
+  # prevent BOOTSTRAP.md creation, killing the hatching process.
+  # USER.md is created by the post-install wizard after hatching completes.
 }
 
 # =============================================================================
-# Step 6: Install Memory Plugin (LanceDB Hybrid)
+# Step 6: Memory Plugin (deferred — installed by post-install wizard AFTER hatching)
 # =============================================================================
 step_install_memory() {
-  msg_step "Step 6/8: Installing memory-lancedb-hybrid plugin"
+  msg_step "Step 6/8: Memory plugin (deferred)"
 
-  ensure_user_runtime_dir
+  # CRITICAL: The memory plugin MUST NOT be installed before onboard/hatching.
+  #
+  # OpenClaw's workspace initialization (workspace-R-NeOkBt.js lines 314-332)
+  # checks for existing content in the workspace directory. If it finds any
+  # (including skills/, memory/, or plugin data files), it sets setupCompletedAt
+  # immediately and skips BOOTSTRAP.md creation. Without BOOTSTRAP.md, the
+  # "Wake up, my friend..." hatching dialogue never fires.
+  #
+  # The memory-lancedb-hybrid plugin is installed by the post-install wizard
+  # (openclaw-postinstall.sh) AFTER the bot has been hatched.
 
-  msg_info "Installing memory plugin from GitHub..."
-  sudo -u "$CLAW_USER" bash -c \
-    'export PATH="${HOME}/.npm-global/bin:${PATH}" && \
-     cd ~/.openclaw/workspace && \
-     mkdir -p skills && \
-     cd skills && \
-     git clone https://github.com/CortexReach/memory-lancedb-pro.git memory-lancedb-hybrid && \
-     cd memory-lancedb-hybrid && \
-     npm install --omit=dev' \
-    2>&1 | tail -3 || {
-      msg_warn "Memory plugin install failed. You can install it manually later."
-      msg_warn "See: https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory"
-      return 0
-    }
-
-  msg_ok "Memory plugin installed"
-  msg_info "Memory plugin requires an OpenAI API key for embeddings (text-embedding-3-small)"
-  msg_info "Set OPENAI_API_KEY in ~/.bashrc or ~/.openclaw/.env after first login"
+  msg_info "Memory plugin will be installed after hatching (post-install wizard)"
+  msg_dim "This prevents workspace content from blocking the hatching process"
 }
 
 # =============================================================================
